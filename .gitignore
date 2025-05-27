@@ -96,3 +96,8 @@ site/
 !README.md
 !LICENSE
 !*.md
+
+
+
+# emacs temp files
+**/\#*\#
