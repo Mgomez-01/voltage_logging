@@ -1,0 +1,31 @@
+# Required Arduino Libraries for ESP8266 Voltage Logger
+
+Install these libraries through the Arduino IDE Library Manager:
+
+## Core Libraries (usually included with ESP8266 board package):
+- ESP8266WiFi
+- ESP8266WebServer  
+- FS (SPIFFS filesystem support)
+
+## Additional Libraries to Install:
+1. **WebSocketsServer** by Markus Sattler
+   - Version: Latest stable
+   - Used for real-time communication between ESP8266 and web browser
+
+2. **ArduinoJson** by Benoit Blanchon  
+   - Version: 6.x (latest stable)
+   - Used for JSON data formatting in WebSocket messages
+
+## Installation Steps:
+
+1. Open Arduino IDE
+2. Go to Tools → Manage Libraries...
+3. Search for each library name
+4. Click "Install" for the latest stable version
+
+## ESP8266 Board Package:
+- Add to Board Manager URLs: http://arduino.esp8266.com/stable/package_esp8266com_index.json
+- Install "ESP8266" by ESP8266 Community
+
+## Verification:
+After installation, you should be able to compile the voltage_logger.ino sketch without errors.
