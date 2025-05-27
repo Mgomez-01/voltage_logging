@@ -1,23 +1,72 @@
-# ESP8266 Voltage Logger
+# ESP8266 Dual Sensor Logger - Voltage + Temperature
 
-A real-time voltage logging system using ESP8266 with web-based monitoring and data export capabilities.
+A professional-grade dual sensor data logging system using ESP8266 with CD74HC4067 multiplexer for simultaneous voltage and temperature monitoring.
 
-## Features
+## 🌟 Features
 
-- **Fast ADC Sampling**: Samples voltage every 1ms for capturing rapid changes
-- **Real-time Web Interface**: Live voltage display with interactive chart
-- **Data Persistence**: Stores readings to SPIFFS filesystem, survives power cycles  
+- **Dual Sensor Logging**: Voltage and temperature simultaneously
+- **Fast Sampling**: 500Hz per sensor (1000Hz total) with time-multiplexed reading
+- **Real-time Web Interface**: Live dual sensor display with interactive charts
+- **Data Persistence**: Stores readings to LittleFS filesystem, survives power cycles  
 - **WiFi Access Point**: Creates its own WiFi network for easy connection
 - **WebSocket Communication**: Real-time updates without page refresh
-- **Data Export**: Download all logged data as CSV file
-- **Statistics**: Live min/max/average calculations
+- **Controlled Logging**: Start/stop data collection on demand
+- **CSV Export**: Download timestamped dual sensor data
+- **Advanced Statistics**: Live min/max/average for both sensors
 - **Responsive Design**: Works on desktop and mobile browsers
+- **Hardware Expandable**: CD74HC4067 supports up to 16 analog sensors
+
+## 📊 Sensor Capabilities
+
+### **Voltage Measurement (Channel 0)**
+- **Range**: 0-1V (configurable with voltage dividers)
+- **Resolution**: 10-bit ADC (1024 levels)
+- **Accuracy**: ±0.01V
+- **Sample Rate**: 500Hz
+
+### **Temperature Measurement (Channel 1)**  
+- **Sensor**: 100kΩ NTC Thermistor (Ender 3 compatible)
+- **Range**: -40°C to +125°C
+- **Resolution**: 0.1°C
+- **Accuracy**: ±1°C (with calibration)
+- **Sample Rate**: 500Hz
+- **Conversion**: Steinhart-Hart equation for precision
 
 ## Hardware Requirements
 
-- ESP8266MOD board (like Hiletgo development board)
-- Voltage source to measure (0-1V range)
-- Connection to ADC pin (A0)
+### **Core Components**
+- **ESP8266MOD board** (NodeMCU, Wemos D1 Mini, or similar)
+- **CD74HC4067** 16-channel analog multiplexer (~$2-3)
+- **100kΩ resistor** (for thermistor voltage divider)
+
+### **Sensors**
+- **Voltage source** to measure (0-1V range, expandable with voltage dividers)
+- **100kΩ NTC thermistor** (Ender 3 printer compatible, β=3950K)
+
+### **Optional**
+- **Breadboard and jumper wires** for prototyping
+- **Pull-up resistors** if using longer cable runs
+- **Capacitors** for noise filtering in high-EMI environments
+
+## 🔌 Wiring Overview
+
+```
+ESP8266 → CD74HC4067
+├─ A0 → COM (analog output)
+├─ D1 → S0 (channel select bit 0)
+├─ D2 → S1 (channel select bit 1)
+├─ D3 → S2 (channel select bit 2)
+├─ D4 → S3 (channel select bit 3)
+├─ 3.3V → VCC + EN
+└─ GND → GND
+
+Sensors → CD74HC4067
+├─ C0 → Voltage sensor (0-1V)
+└─ C1 → Thermistor circuit:
+    3.3V ─── [100kΩ] ─── C1 ─── [Thermistor] ─── GND
+```
+
+**📄 See [WIRING_GUIDE.md](WIRING_GUIDE.md) for detailed connection diagrams**
 
 ## Software Requirements
 
@@ -40,25 +89,48 @@ Install these libraries through the Arduino IDE Library Manager:
 3. Go to Tools → Board → Board Manager
 4. Search for "ESP8266" and install the ESP8266 Community package
 
-## Setup Instructions
+## 🚀 Quick Start
 
-1. **Hardware Connection**:
-   - Connect your voltage source to the A0 (ADC) pin
-   - Ensure voltage is within 0-1V range
-   - Connect power to ESP8266 (via USB or external supply)
+**You can test the software immediately** - it works with or without the CD74HC4067:
 
-2. **Upload Code**:
-   - Open `voltage_logger.ino` in Arduino IDE
-   - Select your ESP8266 board (e.g., "NodeMCU 1.0" or "Generic ESP8266")
-   - Select the correct COM port
-   - Upload the sketch
+### **Method 1: PlatformIO (Recommended)**
+```bash
+pip install platformio
+cd voltage_logger
+make deploy
+```
 
-3. **Connect to Device**:
-   - After upload, the ESP8266 will create a WiFi access point
-   - Network Name: `ESP8266_VoltageLogger`
-   - Password: `voltage123`
-   - Connect your device to this network
-   - Open browser to: `http://192.168.4.1`
+### **Method 2: Arduino CLI**
+```bash
+# Install Arduino CLI and ESP8266 core
+arduino-cli core install esp8266:esp8266
+arduino-cli lib install "ArduinoJson" "WebSockets"
+
+# Compile and upload
+arduino-cli compile --fqbn esp8266:esp8266:generic src/main.cpp
+arduino-cli upload -p /dev/ttyUSB0 --fqbn esp8266:esp8266:generic
+```
+
+## 🌐 Usage Instructions
+
+### **1. Connect to WiFi**
+- **Network**: `ESP8266_VoltageLogger`
+- **Password**: `voltage123`
+- **IP Address**: `192.168.4.1`
+
+### **2. Open Web Interface**
+- Open browser to: `http://192.168.4.1`
+- **Status**: Should show "PAUSED" (logging starts paused)
+
+### **3. Start Data Collection**
+- **Click "▶ Start Logging"** when ready to collect data
+- **Watch live readings**: Voltage and temperature update in real-time
+- **Monitor statistics**: Min/max/average for both sensors
+
+### **4. Download Data**
+- **Click "Download Data"** for CSV export
+- **Format**: `timestamp,voltage,temperature`
+- **Example**: `1234,0.8213,23.45`
 
 ## Web Interface
 
