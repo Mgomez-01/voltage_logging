@@ -16,6 +16,8 @@
 #define DEBUG_ADC 1
 #define DEBUG_WEBSOCKET 1
 #define DEBUG_WIFI 1
+#define DEBUG_HEATER 1
+#define DEBUG_PID 1
 
 // WiFi Access Point Configuration  
 const char* ssid = "ESP8266_VoltageLogger";
@@ -35,6 +37,27 @@ const int MUX_S3 = 2;  // D4
 const int VOLTAGE_CHANNEL = 0;    // Channel 0 for voltage measurement
 const int THERMISTOR_CHANNEL = 1; // Channel 1 for thermistor
 
+// Heater control pins and configuration
+const int RELAY_PIN = 16; // GPIO16 (D0) for relay control
+bool heaterEnabled = false;
+bool relayState = false;
+unsigned long relayOnTime = 0;
+const unsigned long MAX_HEATER_TIME = 600000; // 10 min safety timeout
+const float MAX_SAFE_TEMPERATURE = 80.0; // Maximum safe temperature in °C
+
+// PID Controller variables
+float targetTemperature = 25.0; // Default target temperature
+bool pidEnabled = false;
+float pidKp = 2.0;  // Proportional gain
+float pidKi = 0.5;  // Integral gain  
+float pidKd = 0.1;  // Derivative gain
+float pidOutput = 0.0;
+float pidError = 0.0;
+float pidLastError = 0.0;
+float pidIntegral = 0.0;
+const unsigned long PID_INTERVAL = 1000; // PID update interval in ms
+unsigned long lastPIDUpdate = 0;
+
 // ADC and timing variables
 const int ADC_PIN = A0;
 unsigned long lastSample = 0;
@@ -53,12 +76,15 @@ const float TEMPERATURE_NOMINAL = 25.0;      // 25°C
 const float B_COEFFICIENT = 3950.0;          // Beta coefficient for typical 100k thermistor
 const float SERIES_RESISTOR = 100000.0;      // 100k series resistor
 
-// Sensor data structure
+// Sensor data structure with heater control
 struct SensorReading {
   unsigned long timestamp;
   float voltage;
   float temperature;
   int currentChannel; // Which channel was being sampled
+  bool heaterState;   // Heater relay state
+  float pidValue;     // PID controller output
+  float targetTemp;   // Target temperature at time of reading
 };
 
 const int BUFFER_SIZE = 100;
@@ -94,6 +120,19 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 String getIndexHTML();
 void printDebugStats();
 
+// Heater control functions
+void initializeRelay();
+void setRelayState(bool state);
+void checkSafetyTimeout();
+void updatePIDController();
+void handleRelayOn();
+void handleRelayOff();
+void handleSetTemperature();
+void handlePIDEnable();
+void handlePIDDisable();
+void handlePIDParams();
+void handleHeaterStatus();
+
 void setup() {
   Serial.begin(115200);
   delay(1000); // Give serial time to initialize
@@ -106,6 +145,9 @@ void setup() {
   
   // Setup multiplexer control pins
   setupMultiplexer();
+  
+  // Setup heater relay control
+  initializeRelay();
   
   // Debug: Show what A0 maps to and test both channels
   Serial.print("A0 pin number: ");
@@ -171,6 +213,16 @@ void setup() {
   server.on("/status", handleStatus);
   server.on("/start", handleStartLogging);
   server.on("/stop", handleStopLogging);
+  
+  // Heater control routes
+  server.on("/relay/on", handleRelayOn);
+  server.on("/relay/off", handleRelayOff);
+  server.on("/temp/set", handleSetTemperature);
+  server.on("/pid/enable", handlePIDEnable);
+  server.on("/pid/disable", handlePIDDisable);
+  server.on("/pid/params", handlePIDParams);
+  server.on("/heater/status", handleHeaterStatus);
+  
   server.serveStatic("/", LittleFS, "/");
   server.begin();
   Serial.println("OK");
@@ -204,6 +256,10 @@ void setup() {
   Serial.println("   Click 'Start Logging' in web interface to begin");
   Serial.println("   This prevents stale data from previous sessions");
   Serial.println("   Voltage Channel 0, Temperature Channel 1");
+  Serial.println("🔥 HEATER CONTROL READY");
+  Serial.println("   Relay on GPIO16 (D0)");
+  Serial.println("   PID control available");
+  Serial.println("   Safety timeout: 10 minutes");
   Serial.println("===============================================");
   Serial.println();
 }
@@ -212,12 +268,21 @@ void loop() {
   server.handleClient();
   webSocket.loop();
   
+  // Safety checks (always running)
+  checkSafetyTimeout();
+  
   // Only sample when logging is enabled
   if (dataLoggingEnabled) {
     // Dual sensor sampling
     if (millis() - lastSample >= SAMPLE_INTERVAL) {
       readSensors();
       lastSample = millis();
+    }
+    
+    // PID control loop
+    if (pidEnabled && millis() - lastPIDUpdate >= PID_INTERVAL) {
+      updatePIDController();
+      lastPIDUpdate = millis();
     }
     
     // Web updates
@@ -283,11 +348,14 @@ void readSensors() {
     int adcValue = analogRead(ADC_PIN);
     lastTemperature = convertThermistorToTemperature(adcValue);
     
-    // Store the combined reading
+    // Store the combined reading with heater state
     readings[bufferIndex].timestamp = millis();
     readings[bufferIndex].voltage = lastVoltage;
     readings[bufferIndex].temperature = lastTemperature;
     readings[bufferIndex].currentChannel = THERMISTOR_CHANNEL; // Mark as complete cycle
+    readings[bufferIndex].heaterState = relayState;
+    readings[bufferIndex].pidValue = pidOutput;
+    readings[bufferIndex].targetTemp = targetTemperature;
     
     totalReadings++;
     
@@ -356,7 +424,13 @@ void writeBufferToFile() {
       dataFile.print(",");
       dataFile.print(readings[i].voltage, 6);
       dataFile.print(",");
-      dataFile.println(readings[i].temperature, 3);
+      dataFile.print(readings[i].temperature, 3);
+      dataFile.print(",");
+      dataFile.print(readings[i].heaterState ? 1 : 0);
+      dataFile.print(",");
+      dataFile.print(readings[i].targetTemp, 2);
+      dataFile.print(",");
+      dataFile.println(readings[i].pidValue, 2);
       
       // Track batch statistics
       float v = readings[i].voltage;
@@ -415,6 +489,9 @@ void sendWebUpdate() {
       doc["voltage"] = readings[idx].voltage;
       doc["temperature"] = readings[idx].temperature;
       doc["type"] = "reading";
+      doc["heaterState"] = readings[idx].heaterState;
+      doc["targetTemp"] = readings[idx].targetTemp;
+      doc["pidOutput"] = readings[idx].pidValue;
       
       String jsonString;
       serializeJson(doc, jsonString);
@@ -448,14 +525,14 @@ void initializeDataFile() {
   if (!LittleFS.exists(DATA_FILE)) {
     dataFile = LittleFS.open(DATA_FILE, "w");
     if (dataFile) {
-      dataFile.println("timestamp,voltage,temperature");
+      dataFile.println("timestamp,voltage,temperature,heater_state,target_temp,pid_output");
       dataFile.close();
-      Serial.println("Created new data file with dual sensor header");
+      Serial.println("Created new data file with heater control header");
     } else {
       Serial.println("ERROR: Could not create data file!");
     }
   } else {
-    Serial.println("Data file exists, will append new dual sensor data");
+    Serial.println("Data file exists, will append new data with heater control");
   }
 }
 
@@ -535,6 +612,13 @@ void handleStatus() {
   doc["connectedClients"] = webSocket.connectedClients();
   doc["uptime"] = millis() / 1000;
   doc["loggingEnabled"] = dataLoggingEnabled;
+  doc["heaterState"] = relayState;
+  doc["targetTemp"] = targetTemperature;
+  doc["pidEnabled"] = pidEnabled;
+  doc["pidOutput"] = pidOutput;
+  doc["pidKp"] = pidKp;
+  doc["pidKi"] = pidKi;
+  doc["pidKd"] = pidKd;
   
   String jsonString;
   serializeJson(doc, jsonString);
@@ -625,6 +709,228 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
+// Heater Control Implementation Functions
+
+void initializeRelay() {
+  Serial.print("Initializing heater relay control... ");
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Start with relay OFF
+  relayState = false;
+  Serial.println("OK");
+  Serial.print("Relay pin: GPIO");
+  Serial.print(RELAY_PIN);
+  Serial.println(" (D0)");
+}
+
+void setRelayState(bool state) {
+  if (state != relayState) {
+    relayState = state;
+    digitalWrite(RELAY_PIN, state ? HIGH : LOW);
+    
+    if (state) {
+      relayOnTime = millis();
+      #if DEBUG_HEATER
+      Serial.println("HEATER: Relay turned ON");
+      #endif
+    } else {
+      #if DEBUG_HEATER
+      Serial.print("HEATER: Relay turned OFF (was on for ");
+      Serial.print((millis() - relayOnTime) / 1000);
+      Serial.println(" seconds)");
+      #endif
+    }
+  }
+}
+
+void checkSafetyTimeout() {
+  // Check heater timeout
+  if (relayState && millis() - relayOnTime > MAX_HEATER_TIME) {
+    setRelayState(false);
+    heaterEnabled = false;
+    pidEnabled = false;
+    Serial.println("SAFETY: Heater timeout - forced OFF");
+  }
+  
+  // Check temperature limit
+  if (bufferIndex > 0 || bufferFull) {
+    int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
+    float currentTemp = readings[idx].temperature;
+    
+    if (currentTemp > MAX_SAFE_TEMPERATURE) {
+      setRelayState(false);
+      heaterEnabled = false;
+      pidEnabled = false;
+      Serial.print("SAFETY: Over-temperature shutdown! Temp=");
+      Serial.print(currentTemp);
+      Serial.println("°C");
+    }
+    
+    // Check for sensor failure
+    if (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200) {
+      setRelayState(false);
+      heaterEnabled = false;
+      pidEnabled = false;
+      Serial.println("SAFETY: Temperature sensor failure - heater disabled");
+    }
+  }
+}
+
+void updatePIDController() {
+  if (!pidEnabled || bufferIndex == 0) return;
+  
+  // Get current temperature
+  int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
+  float currentTemp = readings[idx].temperature;
+  
+  // Calculate error
+  pidError = targetTemperature - currentTemp;
+  
+  // Proportional term
+  float proportional = pidKp * pidError;
+  
+  // Integral term (with windup protection)
+  pidIntegral += pidError * (PID_INTERVAL / 1000.0);
+  if (pidIntegral > 100) pidIntegral = 100;
+  if (pidIntegral < -100) pidIntegral = -100;
+  float integral = pidKi * pidIntegral;
+  
+  // Derivative term
+  float derivative = pidKd * (pidError - pidLastError) / (PID_INTERVAL / 1000.0);
+  pidLastError = pidError;
+  
+  // Calculate output (0-100%)
+  pidOutput = proportional + integral + derivative;
+  
+  // Clamp output
+  if (pidOutput > 100) pidOutput = 100;
+  if (pidOutput < 0) pidOutput = 0;
+  
+  // Apply output to relay (bang-bang control for now)
+  if (pidOutput > 50.0) {
+    setRelayState(true);
+  } else {
+    setRelayState(false);
+  }
+  
+  #if DEBUG_PID
+  Serial.print("PID: Target=");
+  Serial.print(targetTemperature);
+  Serial.print("°C, Current=");
+  Serial.print(currentTemp);
+  Serial.print("°C, Error=");
+  Serial.print(pidError);
+  Serial.print(", Output=");
+  Serial.print(pidOutput);
+  Serial.print("%, Relay=");
+  Serial.println(relayState ? "ON" : "OFF");
+  #endif
+}
+
+void handleRelayOn() {
+  Serial.println("HTTP: Relay ON requested");
+  heaterEnabled = true;
+  setRelayState(true);
+  server.send(200, "text/plain", "Relay turned ON");
+}
+
+void handleRelayOff() {
+  Serial.println("HTTP: Relay OFF requested");
+  heaterEnabled = false;
+  pidEnabled = false; // Also disable PID when manually turning off
+  setRelayState(false);
+  server.send(200, "text/plain", "Relay turned OFF");
+}
+
+void handleSetTemperature() {
+  if (server.hasArg("temp")) {
+    float newTemp = server.arg("temp").toFloat();
+    if (newTemp >= 0 && newTemp <= MAX_SAFE_TEMPERATURE) {
+      targetTemperature = newTemp;
+      Serial.print("HTTP: Target temperature set to ");
+      Serial.print(targetTemperature);
+      Serial.println("°C");
+      server.send(200, "text/plain", "Target temperature set to " + String(targetTemperature) + "°C");
+    } else {
+      server.send(400, "text/plain", "Invalid temperature (0-" + String(MAX_SAFE_TEMPERATURE) + "°C)");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing temp parameter");
+  }
+}
+
+void handlePIDEnable() {
+  Serial.println("HTTP: PID control ENABLED");
+  pidEnabled = true;
+  heaterEnabled = true;
+  pidIntegral = 0; // Reset integral term
+  pidLastError = 0;
+  server.send(200, "text/plain", "PID control enabled");
+}
+
+void handlePIDDisable() {
+  Serial.println("HTTP: PID control DISABLED");
+  pidEnabled = false;
+  server.send(200, "text/plain", "PID control disabled");
+}
+
+void handlePIDParams() {
+  bool updated = false;
+  
+  if (server.hasArg("kp")) {
+    pidKp = server.arg("kp").toFloat();
+    updated = true;
+  }
+  if (server.hasArg("ki")) {
+    pidKi = server.arg("ki").toFloat();
+    updated = true;
+  }
+  if (server.hasArg("kd")) {
+    pidKd = server.arg("kd").toFloat();
+    updated = true;
+  }
+  
+  if (updated) {
+    Serial.print("HTTP: PID parameters updated - Kp=");
+    Serial.print(pidKp);
+    Serial.print(", Ki=");
+    Serial.print(pidKi);
+    Serial.print(", Kd=");
+    Serial.println(pidKd);
+    
+    // Reset PID state when parameters change
+    pidIntegral = 0;
+    pidLastError = 0;
+    
+    server.send(200, "text/plain", "PID parameters updated");
+  } else {
+    server.send(400, "text/plain", "No parameters provided");
+  }
+}
+
+void handleHeaterStatus() {
+  JsonDocument doc;
+  
+  doc["heaterEnabled"] = heaterEnabled;
+  doc["relayState"] = relayState;
+  doc["targetTemp"] = targetTemperature;
+  doc["pidEnabled"] = pidEnabled;
+  doc["pidOutput"] = pidOutput;
+  doc["pidError"] = pidError;
+  doc["pidKp"] = pidKp;
+  doc["pidKi"] = pidKi;
+  doc["pidKd"] = pidKd;
+  
+  if (relayState) {
+    doc["heaterRuntime"] = (millis() - relayOnTime) / 1000; // seconds
+  } else {
+    doc["heaterRuntime"] = 0;
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  server.send(200, "application/json", jsonString);
+}
+
 void printDebugStats() {
   Serial.println("=== DUAL SENSOR DEBUG STATS ===");
   Serial.print("Uptime: ");
@@ -660,6 +966,38 @@ void printDebugStats() {
   Serial.println(totalWebSocketMessages);
   
   // Show current live readings from both channels
+  Serial.println("HEATER CONTROL STATUS:");
+  Serial.print("  Heater: ");
+  Serial.print(heaterEnabled ? "ENABLED" : "DISABLED");
+  Serial.print(", Relay: ");
+  Serial.print(relayState ? "ON" : "OFF");
+  if (relayState) {
+    Serial.print(" (Runtime: ");
+    Serial.print((millis() - relayOnTime) / 1000);
+    Serial.print("s)");
+  }
+  Serial.println();
+  
+  Serial.print("  PID Control: ");
+  Serial.print(pidEnabled ? "ACTIVE" : "INACTIVE");
+  if (pidEnabled) {
+    Serial.print(" (Target: ");
+    Serial.print(targetTemperature);
+    Serial.print("°C, Output: ");
+    Serial.print(pidOutput, 1);
+    Serial.print("%, Error: ");
+    Serial.print(pidError, 2);
+    Serial.print("°C)");
+  }
+  Serial.println();
+  
+  Serial.print("  PID Parameters: Kp=");
+  Serial.print(pidKp);
+  Serial.print(", Ki=");
+  Serial.print(pidKi);
+  Serial.print(", Kd=");
+  Serial.println(pidKd);
+  
   Serial.println("LIVE sensor readings:");
   
   selectMuxChannel(VOLTAGE_CHANNEL);
@@ -763,7 +1101,7 @@ void printDebugStats() {
 
 String getIndexHTML() {
   String html = "<!DOCTYPE html><html><head>";
-  html += "<title>ESP8266 Dual Sensor Logger</title>";
+  html += "<title>ESP8266 Dual Sensor Logger with Heater Control</title>";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>";
   html += "<style>";
@@ -775,6 +1113,9 @@ String getIndexHTML() {
   html += ".btn:hover { background-color: #45a049; }";
   html += ".btn.danger { background-color: #f44336; }";
   html += ".btn.danger:hover { background-color: #da190b; }";
+  html += ".btn.warning { background-color: #ff9800; }";
+  html += ".btn.warning:hover { background-color: #e68900; }";
+  html += ".btn:disabled { background-color: #cccccc; cursor: not-allowed; }";
   html += ".status { text-align: center; margin-bottom: 20px; padding: 10px; border-radius: 4px; }";
   html += ".status.connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
   html += ".status.disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
@@ -789,12 +1130,20 @@ String getIndexHTML() {
   html += ".stat-value { font-size: 18px; font-weight: bold; color: #4CAF50; }";
   html += ".stat-label { font-size: 12px; color: #666; }";
   html += ".debug { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; }";
+  html += ".control-panel { background-color: #f8f9fa; border: 2px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }";
+  html += ".control-panel h3 { margin-top: 0; color: #495057; }";
+  html += ".heater-status { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-left: 10px; vertical-align: middle; }";
+  html += ".heater-on { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }";
+  html += ".heater-off { background-color: #666666; }";
+  html += ".pid-params { margin-top: 10px; }";
+  html += ".pid-params input { width: 60px; margin: 0 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }";
+  html += ".temp-input { width: 80px; padding: 5px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }";
   html += "</style></head><body>";
   
   html += "<div class=\"container\">";
   html += "<div class=\"header\">";
-  html += "<h1>ESP8266 Dual Sensor Logger</h1>";
-  html += "<p>Real-time voltage and temperature monitoring with CD74HC4067 multiplexer</p>";
+  html += "<h1>ESP8266 Dual Sensor Logger with Heater Control</h1>";
+  html += "<p>Real-time voltage and temperature monitoring with PID heater control</p>";
   html += "</div>";
   
   // Add debug info section
@@ -804,6 +1153,7 @@ String getIndexHTML() {
   html += "WebSocket Port: 81<br>";
   html += "ADC Pin: A0 (pin " + String(A0) + ") via CD74HC4067<br>";
   html += "Channel 0: Voltage Sensor | Channel 1: 100k Thermistor<br>";
+  html += "Heater Relay: GPIO16 (D0)<br>";
   html += "Uptime: <span id=\"uptime\">0</span> seconds<br>";
   html += "Chart Status: <span id=\"chartStatus\">Checking...</span><br>";
   html += "Logging Status: <span id=\"loggingStatus\">" + String(dataLoggingEnabled ? "ACTIVE" : "PAUSED") + "</span><br>";
@@ -820,6 +1170,45 @@ String getIndexHTML() {
   html += "</div>";
   
   html += "<div id=\"status\" class=\"status disconnected\">Connecting to WebSocket...</div>";
+  
+  // Add Heater Control Panel
+  html += "<div class=\"control-panel\">";
+  html += "<h3>🔥 Heater Control</h3>";
+  html += "<div style=\"margin-bottom: 15px;\">";
+  html += "Relay Status: <span id=\"relayStatus\" style=\"font-weight: bold;\">" + String(relayState ? "ON" : "OFF") + "</span>";
+  html += "<span id=\"heaterIndicator\" class=\"heater-status " + String(relayState ? "heater-on" : "heater-off") + "\"></span>";
+  html += "</div>";
+  html += "<div style=\"margin-bottom: 15px;\">";
+  html += "Runtime: <span id=\"heaterRuntime\">0:00:00</span>";
+  html += " | Safety Timeout: 10 minutes";
+  html += "</div>";
+  html += "<button onclick=\"relayOn()\" class=\"btn\" id=\"relayOnBtn\">🔥 Turn ON</button>";
+  html += "<button onclick=\"relayOff()\" class=\"btn danger\" id=\"relayOffBtn\">⏹ Turn OFF</button>";
+  html += "<button onclick=\"emergencyStop()\" class=\"btn danger\" style=\"margin-left: 20px;\">⚠️ EMERGENCY STOP</button>";
+  html += "</div>";
+  
+  // Add Temperature Control Panel
+  html += "<div class=\"control-panel\">";
+  html += "<h3>🌡️ Temperature Control</h3>";
+  html += "<div style=\"margin-bottom: 15px;\">";
+  html += "Current: <span id=\"currentTemp\" style=\"font-size: 20px; font-weight: bold; color: #2196F3;\">--</span>°C";
+  html += " | Target: <input type=\"number\" id=\"targetTempInput\" class=\"temp-input\" value=\"" + String(targetTemperature, 1) + "\" min=\"0\" max=\"" + String(MAX_SAFE_TEMPERATURE) + "\" step=\"0.5\">";
+  html += "<button onclick=\"setTargetTemp()\" class=\"btn\" style=\"padding: 5px 15px;\">Set</button>";
+  html += "</div>";
+  html += "<div style=\"margin-bottom: 15px;\">";
+  html += "PID Control: <span id=\"pidStatus\" style=\"font-weight: bold;\">" + String(pidEnabled ? "ENABLED" : "DISABLED") + "</span>";
+  html += " | Output: <span id=\"pidOutputValue\">" + String(pidOutput, 1) + "</span>%";
+  html += "</div>";
+  html += "<button onclick=\"enablePID()\" class=\"btn\" id=\"pidEnableBtn\">▶ Enable PID</button>";
+  html += "<button onclick=\"disablePID()\" class=\"btn warning\" id=\"pidDisableBtn\">⏸ Manual Mode</button>";
+  html += "<div class=\"pid-params\">";
+  html += "<strong>PID Parameters:</strong>";
+  html += " Kp: <input type=\"number\" id=\"kpInput\" value=\"" + String(pidKp, 2) + "\" step=\"0.1\">";
+  html += " Ki: <input type=\"number\" id=\"kiInput\" value=\"" + String(pidKi, 2) + "\" step=\"0.1\">";
+  html += " Kd: <input type=\"number\" id=\"kdInput\" value=\"" + String(pidKd, 2) + "\" step=\"0.1\">";
+  html += "<button onclick=\"updatePIDParams()\" class=\"btn\" style=\"margin-left: 10px;\">Update</button>";
+  html += "</div>";
+  html += "</div>";
   
   // Current readings section
   html += "<div class=\"current-readings\">";
@@ -854,12 +1243,13 @@ String getIndexHTML() {
   html += "<div class=\"log-container\" id=\"logContainer\"><div>Sensor readings will appear here...</div></div>";
   html += "</div>";
   
-  // JavaScript section with dual sensor support
+  // JavaScript section with dual sensor support and heater control
   html += "<script>";
   html += "let ws, chart, loggingEnabled = true, startTime = Date.now();";
   html += "let connectionAttempts = 0, lastMessageTime = 0, maxRetries = 10;";
   html += "let voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
   html += "let tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
+  html += "let heaterState = false, pidEnabled = false, heaterStartTime = 0;";
   
   html += "function updateDebugInfo() {";
   html += "document.getElementById('uptime').textContent = Math.floor((Date.now() - startTime) / 1000);";
@@ -960,7 +1350,7 @@ String getIndexHTML() {
   html += "if (loggingEnabled) { ";
   html += "try { ";
   html += "const data = JSON.parse(event.data); ";
-  html += "if (data.type === 'reading') addSensorReading(data.timestamp, data.voltage, data.temperature); ";
+  html += "if (data.type === 'reading') addSensorReading(data.timestamp, data.voltage, data.temperature, data); ";
   html += "} catch(e) { logDebug('Error parsing message: ' + e.message); } ";
   html += "} ";
   html += "};";
@@ -973,7 +1363,7 @@ String getIndexHTML() {
   html += "return response.json();";
   html += "}).then(function(data) {";
   html += "if (data.voltage !== undefined && data.temperature !== undefined) {";
-  html += "addSensorReading(data.timestamp, data.voltage, data.temperature);";
+  html += "addSensorReading(data.timestamp, data.voltage, data.temperature, data);";
   html += "}";
   html += "}).catch(function(error) {";
   html += "logDebug('Polling error: ' + error.message);";
@@ -981,9 +1371,14 @@ String getIndexHTML() {
   html += "}, 500);";
   html += "}";
   
-  html += "function addSensorReading(timestamp, voltage, temperature) {";
+  html += "function addSensorReading(timestamp, voltage, temperature, data) {";
   html += "document.getElementById('currentVoltage').textContent = voltage.toFixed(4);";
   html += "document.getElementById('currentTemperature').textContent = temperature.toFixed(2);";
+  html += "document.getElementById('currentTemp').textContent = temperature.toFixed(2);";
+  
+  html += "if (data) {";
+  html += "updateHeaterStatus(data.heaterState, data.targetTemp, data.pidEnabled, data.pidOutput);";
+  html += "}";
   
   html += "voltageStats.min = Math.min(voltageStats.min, voltage);";
   html += "voltageStats.max = Math.max(voltageStats.max, voltage);";
@@ -1028,7 +1423,12 @@ String getIndexHTML() {
   
   html += "const logContainer = document.getElementById('logContainer');";
   html += "const logEntry = document.createElement('div');";
-  html += "logEntry.textContent = new Date(timestamp).toLocaleTimeString() + ' - ' + voltage.toFixed(4) + 'V | ' + temperature.toFixed(2) + '°C';";
+  html += "let logText = new Date(timestamp).toLocaleTimeString() + ' - ' + voltage.toFixed(4) + 'V | ' + temperature.toFixed(2) + '°C';";
+  html += "if (data && data.heaterState !== undefined) {";
+  html += "logText += ' | Heater: ' + (data.heaterState ? 'ON' : 'OFF');";
+  html += "if (data.pidEnabled) logText += ' | PID: ' + data.pidOutput.toFixed(1) + '%';";
+  html += "}";
+  html += "logEntry.textContent = logText;";
   html += "logContainer.appendChild(logEntry);";
   html += "while (logContainer.children.length > 1000) logContainer.removeChild(logContainer.firstChild);";
   html += "logContainer.scrollTop = logContainer.scrollHeight;";
@@ -1097,6 +1497,108 @@ String getIndexHTML() {
   html += "});";
   html += "}";
   
+  html += "function updateHeaterStatus(state, target, pidOn, output) {";
+  html += "heaterState = state;";
+  html += "pidEnabled = pidOn;";
+  html += "document.getElementById('relayStatus').textContent = state ? 'ON' : 'OFF';";
+  html += "document.getElementById('heaterIndicator').className = 'heater-status ' + (state ? 'heater-on' : 'heater-off');";
+  html += "document.getElementById('pidStatus').textContent = pidOn ? 'ENABLED' : 'DISABLED';";
+  html += "document.getElementById('pidOutputValue').textContent = output.toFixed(1);";
+  html += "if (state && heaterStartTime === 0) heaterStartTime = Date.now();";
+  html += "if (!state) heaterStartTime = 0;";
+  html += "}";
+  
+  html += "function updateHeaterRuntime() {";
+  html += "if (heaterState && heaterStartTime > 0) {";
+  html += "const runtime = Math.floor((Date.now() - heaterStartTime) / 1000);";
+  html += "const hours = Math.floor(runtime / 3600);";
+  html += "const minutes = Math.floor((runtime % 3600) / 60);";
+  html += "const seconds = runtime % 60;";
+  html += "document.getElementById('heaterRuntime').textContent = ";
+  html += "hours + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');";
+  html += "} else {";
+  html += "document.getElementById('heaterRuntime').textContent = '0:00:00';";
+  html += "}";
+  html += "}";
+  
+  html += "function relayOn() {";
+  html += "if (confirm('Turn heater ON?')) {";
+  html += "fetch('/relay/on').then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "logDebug('Relay ON response: ' + data);";
+  html += "}).catch(function(error) {";
+  html += "alert('Error turning relay on');";
+  html += "});";
+  html += "}";
+  html += "}";
+  
+  html += "function relayOff() {";
+  html += "fetch('/relay/off').then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "logDebug('Relay OFF response: ' + data);";
+  html += "}).catch(function(error) {";
+  html += "alert('Error turning relay off');";
+  html += "});";
+  html += "}";
+  
+  html += "function emergencyStop() {";
+  html += "fetch('/relay/off').then(function() {";
+  html += "fetch('/pid/disable').then(function() {";
+  html += "alert('EMERGENCY STOP - Heater OFF, PID Disabled');";
+  html += "});";
+  html += "});";
+  html += "}";
+  
+  html += "function setTargetTemp() {";
+  html += "const temp = document.getElementById('targetTempInput').value;";
+  html += "fetch('/temp/set?temp=' + temp).then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "logDebug('Set temperature response: ' + data);";
+  html += "}).catch(function(error) {";
+  html += "alert('Error setting temperature');";
+  html += "});";
+  html += "}";
+  
+  html += "function enablePID() {";
+  html += "fetch('/pid/enable').then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "logDebug('PID enable response: ' + data);";
+  html += "document.getElementById('pidEnableBtn').disabled = true;";
+  html += "document.getElementById('pidDisableBtn').disabled = false;";
+  html += "}).catch(function(error) {";
+  html += "alert('Error enabling PID');";
+  html += "});";
+  html += "}";
+  
+  html += "function disablePID() {";
+  html += "fetch('/pid/disable').then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "logDebug('PID disable response: ' + data);";
+  html += "document.getElementById('pidEnableBtn').disabled = false;";
+  html += "document.getElementById('pidDisableBtn').disabled = true;";
+  html += "}).catch(function(error) {";
+  html += "alert('Error disabling PID');";
+  html += "});";
+  html += "}";
+  
+  html += "function updatePIDParams() {";
+  html += "const kp = document.getElementById('kpInput').value;";
+  html += "const ki = document.getElementById('kiInput').value;";
+  html += "const kd = document.getElementById('kdInput').value;";
+  html += "fetch('/pid/params?kp=' + kp + '&ki=' + ki + '&kd=' + kd).then(function(response) {";
+  html += "return response.text();";
+  html += "}).then(function(data) {";
+  html += "alert('PID parameters updated');";
+  html += "}).catch(function(error) {";
+  html += "alert('Error updating PID parameters');";
+  html += "});";
+  html += "}";
+  
   html += "window.onload = function() { ";
   html += "logDebug('Page loaded, initializing dual sensor components...'); ";
   html += "try { initChart(); } catch(e) { logDebug('Chart initialization failed: ' + e.message); }";
@@ -1104,7 +1606,10 @@ String getIndexHTML() {
   html += "initWebSocket(); ";
   html += "logDebug('Starting debug info updates...'); ";
   html += "setInterval(updateDebugInfo, 1000); ";
-  html += "logDebug('All dual sensor initialization complete'); ";
+  html += "setInterval(updateHeaterRuntime, 1000); ";
+  html += "document.getElementById('pidEnableBtn').disabled = " + String(pidEnabled) + ";";
+  html += "document.getElementById('pidDisableBtn').disabled = " + String(!pidEnabled) + ";";
+  html += "logDebug('All dual sensor and heater control initialization complete'); ";
   html += "};";
   
   html += "</script></body></html>";
