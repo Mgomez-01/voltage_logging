@@ -1229,261 +1229,311 @@ void printDebugStats() {
   Serial.println();
 }
 
+// Forward declarations for HTML generation functions
+String getHTMLHeader();
+String getHTMLStyles();
+String getHTMLBody();
+String getHTMLScript();
+
 String getIndexHTML() {
-  String html = "<!DOCTYPE html><html><head>";
-  html += "<title>ESP8266 Dual Sensor Logger with Heater Control</title>";
-  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-  html += "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>";
-  html += "<style>";
-  html += "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }";
-  html += ".container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
-  html += ".header { text-align: center; margin-bottom: 30px; color: #333; }";
-  html += ".controls { text-align: center; margin-bottom: 20px; }";
-  html += ".btn { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 0 5px; text-decoration: none; display: inline-block; }";
-  html += ".btn:hover { background-color: #45a049; }";
-  html += ".btn.danger { background-color: #f44336; }";
-  html += ".btn.danger:hover { background-color: #da190b; }";
-  html += ".btn.warning { background-color: #ff9800; }";
-  html += ".btn.warning:hover { background-color: #e68900; }";
-  html += ".btn:disabled { background-color: #cccccc; cursor: not-allowed; }";
-  html += ".status { text-align: center; margin-bottom: 20px; padding: 10px; border-radius: 4px; }";
-  html += ".status.connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
-  html += ".status.disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
-  html += ".chart-container { width: 100%; height: 400px; margin-bottom: 30px; }";
-  html += ".log-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background-color: #f9f9f9; font-family: monospace; font-size: 12px; }";
-  html += ".current-readings { text-align: center; margin-bottom: 20px; }";
-  html += ".reading { display: inline-block; margin: 0 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border: 2px solid #dee2e6; }";
-  html += ".reading-value { font-size: 24px; font-weight: bold; color: #2196F3; }";
-  html += ".reading-label { font-size: 14px; color: #666; margin-top: 5px; }";
-  html += ".stats { display: flex; justify-content: space-around; margin-bottom: 20px; flex-wrap: wrap; }";
-  html += ".stat { text-align: center; margin: 5px; }";
-  html += ".stat-value { font-size: 18px; font-weight: bold; color: #4CAF50; }";
-  html += ".stat-label { font-size: 12px; color: #666; }";
-  html += ".debug { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; }";
-  html += ".control-panel { background-color: #f8f9fa; border: 2px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }";
-  html += ".control-panel h3 { margin-top: 0; color: #495057; }";
-  html += ".heater-status { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-left: 10px; vertical-align: middle; }";
-  html += ".heater-on { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }";
-  html += ".heater-off { background-color: #666666; }";
-  html += ".pid-params { margin-top: 10px; }";
-  html += ".pid-params input { width: 60px; margin: 0 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }";
-  html += ".temp-input { width: 80px; padding: 5px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }";
-  html += "</style></head><body>";
+  // Use reserve to pre-allocate memory and reduce fragmentation
+  String html;
+  html.reserve(8192); // Reserve reasonable initial size
   
-  html += "<div class=\"container\">";
-  html += "<div class=\"header\">";
-  html += "<h1>ESP8266 Dual Sensor Logger with Heater Control</h1>";
-  html += "<p>Real-time voltage and temperature monitoring with PID heater control</p>";
-  html += "</div>";
+  html = getHTMLHeader();
+  html += getHTMLStyles();
+  html += getHTMLBody();
+  html += getHTMLScript();
+  html += "</html>";
+  
+  return html;
+}
+
+String getHTMLHeader() {
+  String header;
+  header.reserve(512);
+  
+  header = "<!DOCTYPE html><html><head>";
+  header += "<title>ESP8266 Dual Sensor Logger with Heater Control</title>";
+  header += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  header += "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>";
+  header += "</head>";
+  
+  return header;
+}
+
+String getHTMLStyles() {
+  String styles;
+  styles.reserve(2048);
+  
+  styles = "<style>";
+  styles += "body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }";
+  styles += ".container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
+  styles += ".header { text-align: center; margin-bottom: 30px; color: #333; }";
+  styles += ".controls { text-align: center; margin-bottom: 20px; }";
+  styles += ".btn { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 0 5px; text-decoration: none; display: inline-block; }";
+  styles += ".btn:hover { background-color: #45a049; }";
+  styles += ".btn.danger { background-color: #f44336; }";
+  styles += ".btn.danger:hover { background-color: #da190b; }";
+  styles += ".btn.warning { background-color: #ff9800; }";
+  styles += ".btn.warning:hover { background-color: #e68900; }";
+  styles += ".btn:disabled { background-color: #cccccc; cursor: not-allowed; }";
+  styles += ".status { text-align: center; margin-bottom: 20px; padding: 10px; border-radius: 4px; }";
+  styles += ".status.connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }";
+  styles += ".status.disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }";
+  styles += ".chart-container { width: 100%; height: 400px; margin-bottom: 30px; }";
+  styles += ".log-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background-color: #f9f9f9; font-family: monospace; font-size: 12px; }";
+  styles += ".current-readings { text-align: center; margin-bottom: 20px; }";
+  styles += ".reading { display: inline-block; margin: 0 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border: 2px solid #dee2e6; }";
+  styles += ".reading-value { font-size: 24px; font-weight: bold; color: #2196F3; }";
+  styles += ".reading-label { font-size: 14px; color: #666; margin-top: 5px; }";
+  styles += ".stats { display: flex; justify-content: space-around; margin-bottom: 20px; flex-wrap: wrap; }";
+  styles += ".stat { text-align: center; margin: 5px; }";
+  styles += ".stat-value { font-size: 18px; font-weight: bold; color: #4CAF50; }";
+  styles += ".stat-label { font-size: 12px; color: #666; }";
+  styles += ".debug { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; }";
+  styles += ".control-panel { background-color: #f8f9fa; border: 2px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }";
+  styles += ".control-panel h3 { margin-top: 0; color: #495057; }";
+  styles += ".heater-status { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-left: 10px; vertical-align: middle; }";
+  styles += ".heater-on { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }";
+  styles += ".heater-off { background-color: #666666; }";
+  styles += ".pid-params { margin-top: 10px; }";
+  styles += ".pid-params input { width: 60px; margin: 0 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }";
+  styles += ".temp-input { width: 80px; padding: 5px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }";
+  styles += "</style>";
+  
+  return styles;
+}
+
+String getHTMLBody() {
+  String body;
+  body.reserve(4096);
+  
+  body = "<body>";
+  
+  body += "<div class=\"container\">";
+  body += "<div class=\"header\">";
+  body += "<h1>ESP8266 Dual Sensor Logger with Heater Control</h1>";
+  body += "<p>Real-time voltage and temperature monitoring with PID heater control</p>";
+  body += "</div>";
   
   // Add debug info section
-  html += "<div class=\"debug\">";
-  html += "<strong>Debug Info:</strong><br>";
-  html += "ESP8266 IP: " + WiFi.softAPIP().toString() + "<br>";
-  html += "WebSocket Port: 81<br>";
-  html += "ADC Pin: A0 (pin " + String(A0) + ") via CD74HC4067<br>";
-  html += "Channel 0: Voltage Sensor | Channel 1: 100k Thermistor<br>";
-  html += "Heater Relay: GPIO16 (D0)<br>";
-  html += "Uptime: <span id=\"uptime\">0</span> seconds<br>";
-  html += "Chart Status: <span id=\"chartStatus\">Checking...</span><br>";
-  html += "Logging Status: <span id=\"loggingStatus\">" + String(dataLoggingEnabled ? "ACTIVE" : "PAUSED") + "</span><br>";
-  html += "Connection Status: <span id=\"connectionDebug\">Initializing...</span>";
-  html += "</div>";
+  body += "<div class=\"debug\">";
+  body += "<strong>Debug Info:</strong><br>";
+  body += "ESP8266 IP: " + WiFi.softAPIP().toString() + "<br>";
+  body += "WebSocket Port: 81<br>";
+  body += "ADC Pin: A0 (pin " + String(A0) + ") via CD74HC4067<br>";
+  body += "Channel 0: Voltage Sensor | Channel 1: 100k Thermistor<br>";
+  body += "Heater Relay: GPIO16 (D0)<br>";
+  body += "Uptime: <span id=\"uptime\">0</span> seconds<br>";
+  body += "Chart Status: <span id=\"chartStatus\">Checking...</span><br>";
+  body += "Logging Status: <span id=\"loggingStatus\">" + String(dataLoggingEnabled ? "ACTIVE" : "PAUSED") + "</span><br>";
+  body += "Connection Status: <span id=\"connectionDebug\">Initializing...</span>";
+  body += "</div>";
   
   // Add prominent logging control section
-  html += "<div style=\"text-align:center;margin:20px 0;padding:20px;background-color:#f8f9fa;border-radius:8px;border:2px solid #dee2e6;\">";
-  html += "<h3 style=\"margin-top:0;color:#495057;\">Data Logging Control</h3>";
-  html += "<div style=\"font-size:18px;margin:10px 0;\">Status: <span id=\"mainLoggingStatus\" style=\"font-weight:bold;color:" + String(dataLoggingEnabled ? "#28a745" : "#dc3545") + ";\">" + String(dataLoggingEnabled ? "ACTIVE" : "PAUSED") + "</span></div>";
-  html += "<button onclick=\"startLogging()\" class=\"btn\" id=\"startBtn\" style=\"background-color:#28a745;margin:5px;\" " + String(dataLoggingEnabled ? "disabled" : "") + ">▶ Start Logging</button>";
-  html += "<button onclick=\"stopLogging()\" class=\"btn\" id=\"stopBtn\" style=\"background-color:#dc3545;margin:5px;\" " + String(dataLoggingEnabled ? "" : "disabled") + ">⏸ Stop Logging</button>";
-  html += "<div style=\"font-size:14px;color:#6c757d;margin-top:10px;\">" + String(dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection") + "</div>";
-  html += "</div>";
+  body += "<div style=\"text-align:center;margin:20px 0;padding:20px;background-color:#f8f9fa;border-radius:8px;border:2px solid #dee2e6;\">";
+  body += "<h3 style=\"margin-top:0;color:#495057;\">Data Logging Control</h3>";
+  body += "<div style=\"font-size:18px;margin:10px 0;\">Status: <span id=\"mainLoggingStatus\" style=\"font-weight:bold;color:" + String(dataLoggingEnabled ? "#28a745" : "#dc3545") + ";\">" + String(dataLoggingEnabled ? "ACTIVE" : "PAUSED") + "</span></div>";
+  body += "<button onclick=\"startLogging()\" class=\"btn\" id=\"startBtn\" style=\"background-color:#28a745;margin:5px;\" " + String(dataLoggingEnabled ? "disabled" : "") + ">▶ Start Logging</button>";
+  body += "<button onclick=\"stopLogging()\" class=\"btn\" id=\"stopBtn\" style=\"background-color:#dc3545;margin:5px;\" " + String(dataLoggingEnabled ? "" : "disabled") + ">⏸ Stop Logging</button>";
+  body += "<div style=\"font-size:14px;color:#6c757d;margin-top:10px;\">" + String(dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection") + "</div>";
+  body += "</div>";
   
-  html += "<div id=\"status\" class=\"status disconnected\">Connecting to WebSocket...</div>";
+  body += "<div id=\"status\" class=\"status disconnected\">Connecting to WebSocket...</div>";
   
   // Add Heater Control Panel
-  html += "<div class=\"control-panel\">";
-  html += "<h3>🔥 Heater Control</h3>";
-  html += "<div style=\"margin-bottom: 15px;\">";
-  html += "Relay Status: <span id=\"relayStatus\" style=\"font-weight: bold;\">" + String(relayState ? "ON" : "OFF") + "</span>";
-  html += "<span id=\"heaterIndicator\" class=\"heater-status " + String(relayState ? "heater-on" : "heater-off") + "\"></span>";
-  html += "</div>";
-  html += "<div style=\"margin-bottom: 15px;\">";
-  html += "Runtime: <span id=\"heaterRuntime\">0:00:00</span>";
-  html += " | Safety Timeout: 10 minutes";
-  html += "</div>";
-  html += "<button onclick=\"relayOn()\" class=\"btn\" id=\"relayOnBtn\">🔥 Turn ON</button>";
-  html += "<button onclick=\"relayOff()\" class=\"btn danger\" id=\"relayOffBtn\">⏹ Turn OFF</button>";
-  html += "<button onclick=\"emergencyStop()\" class=\"btn danger\" style=\"margin-left: 20px;\">⚠️ EMERGENCY STOP</button>";
-  html += "</div>";
+  body += "<div class=\"control-panel\">";
+  body += "<h3>🔥 Heater Control</h3>";
+  body += "<div style=\"margin-bottom: 15px;\">";
+  body += "Relay Status: <span id=\"relayStatus\" style=\"font-weight: bold;\">" + String(relayState ? "ON" : "OFF") + "</span>";
+  body += "<span id=\"heaterIndicator\" class=\"heater-status " + String(relayState ? "heater-on" : "heater-off") + "\"></span>";
+  body += "</div>";
+  body += "<div style=\"margin-bottom: 15px;\">";
+  body += "Runtime: <span id=\"heaterRuntime\">0:00:00</span>";
+  body += " | Safety Timeout: 10 minutes";
+  body += "</div>";
+  body += "<button onclick=\"relayOn()\" class=\"btn\" id=\"relayOnBtn\">🔥 Turn ON</button>";
+  body += "<button onclick=\"relayOff()\" class=\"btn danger\" id=\"relayOffBtn\">⏹ Turn OFF</button>";
+  body += "<button onclick=\"emergencyStop()\" class=\"btn danger\" style=\"margin-left: 20px;\">⚠️ EMERGENCY STOP</button>";
+  body += "</div>";
   
   // Add Temperature Control Panel
-  html += "<div class=\"control-panel\">";
-  html += "<h3>🌡️ Temperature Control</h3>";
-  html += "<div style=\"margin-bottom: 15px;\">";
-  html += "Current: <span id=\"currentTemp\" style=\"font-size: 20px; font-weight: bold; color: #2196F3;\">--</span>°C";
-  html += " | Target: <input type=\"number\" id=\"targetTempInput\" class=\"temp-input\" value=\"" + String(targetTemperature, 1) + "\" min=\"0\" max=\"" + String(MAX_SAFE_TEMPERATURE) + "\" step=\"0.5\">";
-  html += "<button onclick=\"setTargetTemp()\" class=\"btn\" style=\"padding: 5px 15px;\">Set</button>";
-  html += "</div>";
-  html += "<div style=\"margin-bottom: 15px;\">";
-  html += "PID Control: <span id=\"pidStatus\" style=\"font-weight: bold;\">" + String(pidEnabled ? "ENABLED" : "DISABLED") + "</span>";
-  html += " | Output: <span id=\"pidOutputValue\">" + String(pidOutput, 1) + "</span>%";
-  html += "</div>";
-  html += "<button onclick=\"enablePID()\" class=\"btn\" id=\"pidEnableBtn\">▶ Enable PID</button>";
-  html += "<button onclick=\"disablePID()\" class=\"btn warning\" id=\"pidDisableBtn\">⏸ Manual Mode</button>";
-  html += "<div class=\"pid-params\">";
-  html += "<strong>PID Parameters:</strong>";
-  html += " Kp: <input type=\"number\" id=\"kpInput\" value=\"" + String(pidKp, 2) + "\" step=\"0.1\">";
-  html += " Ki: <input type=\"number\" id=\"kiInput\" value=\"" + String(pidKi, 2) + "\" step=\"0.1\">";
-  html += " Kd: <input type=\"number\" id=\"kdInput\" value=\"" + String(pidKd, 2) + "\" step=\"0.1\">";
-  html += "<button onclick=\"updatePIDParams()\" class=\"btn\" style=\"margin-left: 10px;\">Update</button>";
-  html += "</div>";
-  html += "</div>";
+  body += "<div class=\"control-panel\">";
+  body += "<h3>🌡️ Temperature Control</h3>";
+  body += "<div style=\"margin-bottom: 15px;\">";
+  body += "Current: <span id=\"currentTemp\" style=\"font-size: 20px; font-weight: bold; color: #2196F3;\">--</span>°C";
+  body += " | Target: <input type=\"number\" id=\"targetTempInput\" class=\"temp-input\" value=\"" + String(targetTemperature, 1) + "\" min=\"0\" max=\"" + String(MAX_SAFE_TEMPERATURE) + "\" step=\"0.5\">";
+  body += "<button onclick=\"setTargetTemp()\" class=\"btn\" style=\"padding: 5px 15px;\">Set</button>";
+  body += "</div>";
+  body += "<div style=\"margin-bottom: 15px;\">";
+  body += "PID Control: <span id=\"pidStatus\" style=\"font-weight: bold;\">" + String(pidEnabled ? "ENABLED" : "DISABLED") + "</span>";
+  body += " | Output: <span id=\"pidOutputValue\">" + String(pidOutput, 1) + "</span>%";
+  body += "</div>";
+  body += "<button onclick=\"enablePID()\" class=\"btn\" id=\"pidEnableBtn\">▶ Enable PID</button>";
+  body += "<button onclick=\"disablePID()\" class=\"btn warning\" id=\"pidDisableBtn\">⏸ Manual Mode</button>";
+  body += "<div class=\"pid-params\">";
+  body += "<strong>PID Parameters:</strong>";
+  body += " Kp: <input type=\"number\" id=\"kpInput\" value=\"" + String(pidKp, 2) + "\" step=\"0.1\">";
+  body += " Ki: <input type=\"number\" id=\"kiInput\" value=\"" + String(pidKi, 2) + "\" step=\"0.1\">";
+  body += " Kd: <input type=\"number\" id=\"kdInput\" value=\"" + String(pidKd, 2) + "\" step=\"0.1\">";
+  body += "<button onclick=\"updatePIDParams()\" class=\"btn\" style=\"margin-left: 10px;\">Update</button>";
+  body += "</div>";
+  body += "</div>";
   
   // Current readings section
-  html += "<div class=\"current-readings\">";
-  html += "<div class=\"reading\">";
-  html += "<div class=\"reading-value\" id=\"currentVoltage\">--</div>";
-  html += "<div class=\"reading-label\">Voltage (V)</div>";
-  html += "</div>";
-  html += "<div class=\"reading\">";
-  html += "<div class=\"reading-value\" id=\"currentTemperature\">--</div>";
-  html += "<div class=\"reading-label\">Temperature (°C)</div>";
-  html += "</div>";
-  html += "</div>";
+  body += "<div class=\"current-readings\">";
+  body += "<div class=\"reading\">";
+  body += "<div class=\"reading-value\" id=\"currentVoltage\">--</div>";
+  body += "<div class=\"reading-label\">Voltage (V)</div>";
+  body += "</div>";
+  body += "<div class=\"reading\">";
+  body += "<div class=\"reading-value\" id=\"currentTemperature\">--</div>";
+  body += "<div class=\"reading-label\">Temperature (°C)</div>";
+  body += "</div>";
+  body += "</div>";
   
   // Statistics section
-  html += "<div class=\"stats\">";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"minVoltage\">--</div><div class=\"stat-label\">Min Voltage (V)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"maxVoltage\">--</div><div class=\"stat-label\">Max Voltage (V)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"avgVoltage\">--</div><div class=\"stat-label\">Avg Voltage (V)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"minTemperature\">--</div><div class=\"stat-label\">Min Temp (°C)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"maxTemperature\">--</div><div class=\"stat-label\">Max Temp (°C)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"avgTemperature\">--</div><div class=\"stat-label\">Avg Temp (°C)</div></div>";
-  html += "<div class=\"stat\"><div class=\"stat-value\" id=\"sampleCount\">0</div><div class=\"stat-label\">Samples</div></div>";
-  html += "</div>";
+  body += "<div class=\"stats\">";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"minVoltage\">--</div><div class=\"stat-label\">Min Voltage (V)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"maxVoltage\">--</div><div class=\"stat-label\">Max Voltage (V)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"avgVoltage\">--</div><div class=\"stat-label\">Avg Voltage (V)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"minTemperature\">--</div><div class=\"stat-label\">Min Temp (°C)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"maxTemperature\">--</div><div class=\"stat-label\">Max Temp (°C)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"avgTemperature\">--</div><div class=\"stat-label\">Avg Temp (°C)</div></div>";
+  body += "<div class=\"stat\"><div class=\"stat-value\" id=\"sampleCount\">0</div><div class=\"stat-label\">Samples</div></div>";
+  body += "</div>";
   
-  html += "<div class=\"controls\">";
-  html += "<a href=\"/data.csv\" class=\"btn\">Download Data</a>";
-  html += "<button onclick=\"clearData()\" class=\"btn danger\">Clear Data</button>";
-  html += "<button onclick=\"toggleLogging()\" class=\"btn\" id=\"logToggle\">Pause Logging</button>";
-  html += "</div>";
+  body += "<div class=\"controls\">";
+  body += "<a href=\"/data.csv\" class=\"btn\">Download Data</a>";
+  body += "<button onclick=\"clearData()\" class=\"btn danger\">Clear Data</button>";
+  body += "<button onclick=\"toggleLogging()\" class=\"btn\" id=\"logToggle\">Pause Logging</button>";
+  body += "</div>";
   
-  html += "<div class=\"chart-container\"><canvas id=\"sensorChart\"></canvas></div>";
-  html += "<div class=\"log-container\" id=\"logContainer\"><div>Sensor readings will appear here...</div></div>";
-  html += "</div>";
+  body += "<div class=\"chart-container\"><canvas id=\"sensorChart\"></canvas></div>";
+  body += "<div class=\"log-container\" id=\"logContainer\"><div>Sensor readings will appear here...</div></div>";
+  body += "</div>";
+  body += "</body>";
+  
+  return body;
+}
+
+String getHTMLScript() {
+  String script;
+  script.reserve(8192);
+  
+  script = "<script>";
   
   // JavaScript section with dual sensor support and heater control
-  html += "<script>";
-  html += "let ws, chart, loggingEnabled = true, startTime = Date.now();";
-  html += "let connectionAttempts = 0, lastMessageTime = 0, maxRetries = 10;";
-  html += "let voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
-  html += "let tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
-  html += "let heaterState = false, pidEnabled = false, heaterStartTime = 0;";
+  script += "let ws, chart, loggingEnabled = true, startTime = Date.now();";
+  script += "let connectionAttempts = 0, lastMessageTime = 0, maxRetries = 10;";
+  script += "let voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
+  script += "let tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };";
+  script += "let heaterState = false, pidEnabled = false, heaterStartTime = 0;";
   
-  html += "function updateDebugInfo() {";
-  html += "document.getElementById('uptime').textContent = Math.floor((Date.now() - startTime) / 1000);";
-  html += "let status = 'Attempts: ' + connectionAttempts + '/' + maxRetries;";
-  html += "if (lastMessageTime > 0) status += ', Last message: ' + Math.floor((Date.now() - lastMessageTime) / 1000) + 's ago';";
-  html += "document.getElementById('connectionDebug').textContent = status;";
-  html += "}";
+  script += "function updateDebugInfo() {";
+  script += "document.getElementById('uptime').textContent = Math.floor((Date.now() - startTime) / 1000);";
+  script += "let status = 'Attempts: ' + connectionAttempts + '/' + maxRetries;";
+  script += "if (lastMessageTime > 0) status += ', Last message: ' + Math.floor((Date.now() - lastMessageTime) / 1000) + 's ago';";
+  script += "document.getElementById('connectionDebug').textContent = status;";
+  script += "}";
   
-  html += "function logDebug(msg) { console.log('[DEBUG] ' + msg); }";
+  script += "function logDebug(msg) { console.log('[DEBUG] ' + msg); }";
   
-  html += "function initChart() {";
-  html += "logDebug('Checking if Chart.js is available...');";
-  html += "if (typeof Chart === 'undefined') {";
-  html += "logDebug('Chart.js not loaded - chart will be disabled');";
-  html += "document.getElementById('chartStatus').textContent = 'Disabled (no internet)';";
-  html += "document.getElementById('chartStatus').style.color = 'orange';";
-  html += "document.getElementById('sensorChart').style.display = 'none';";
-  html += "const chartContainer = document.querySelector('.chart-container');";
-  html += "if (chartContainer) chartContainer.innerHTML = '<div style=\"text-align:center;padding:20px;background:#f0f0f0;border-radius:4px;color:#666;\"><strong>Real-time Chart Unavailable</strong><br>Chart.js requires internet connection<br>Sensor readings still work below</div>';";
-  html += "return;";
-  html += "}";
-  html += "logDebug('Chart.js loaded successfully, initializing dual sensor chart...');";
-  html += "try {";
-  html += "const ctx = document.getElementById('sensorChart').getContext('2d');";
-  html += "chart = new Chart(ctx, {";
-  html += "type: 'line',";
-  html += "data: { labels: [], datasets: [";
-  html += "{ label: 'Voltage (V)', data: [], borderColor: '#2196F3', backgroundColor: 'rgba(33, 150, 243, 0.1)', borderWidth: 2, fill: false, yAxisID: 'voltage' },";
-  html += "{ label: 'Temperature (°C)', data: [], borderColor: '#FF6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', borderWidth: 2, fill: false, yAxisID: 'temperature' }";
-  html += "] },";
-  html += "options: { responsive: true, maintainAspectRatio: false, scales: { ";
-  html += "x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Time (ms)' } }, ";
-  html += "voltage: { type: 'linear', position: 'left', title: { display: true, text: 'Voltage (V)' }, min: 0, max: 1 }, ";
-  html += "temperature: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (°C)' } }";
-  html += "}, plugins: { legend: { display: true } }, animation: { duration: 0 } }";
-  html += "});";
-  html += "document.getElementById('chartStatus').textContent = 'Active (Dual Sensor)';";
-  html += "document.getElementById('chartStatus').style.color = 'green';";
-  html += "logDebug('Dual sensor chart initialized successfully');";
-  html += "} catch(e) {";
-  html += "logDebug('Error initializing chart: ' + e.message);";
-  html += "document.getElementById('chartStatus').textContent = 'Error: ' + e.message;";
-  html += "document.getElementById('chartStatus').style.color = 'red';";
-  html += "chart = null;";
-  html += "}";
-  html += "}";
+  script += "function initChart() {";
+  script += "logDebug('Checking if Chart.js is available...');";
+  script += "if (typeof Chart === 'undefined') {";
+  script += "logDebug('Chart.js not loaded - chart will be disabled');";
+  script += "document.getElementById('chartStatus').textContent = 'Disabled (no internet)';";
+  script += "document.getElementById('chartStatus').style.color = 'orange';";
+  script += "document.getElementById('sensorChart').style.display = 'none';";
+  script += "const chartContainer = document.querySelector('.chart-container');";
+  script += "if (chartContainer) chartContainer.innerHTML = '<div style=\"text-align:center;padding:20px;background:#f0f0f0;border-radius:4px;color:#666;\"><strong>Real-time Chart Unavailable</strong><br>Chart.js requires internet connection<br>Sensor readings still work below</div>';";
+  script += "return;";
+  script += "}";
+  script += "logDebug('Chart.js loaded successfully, initializing dual sensor chart...');";
+  script += "try {";
+  script += "const ctx = document.getElementById('sensorChart').getContext('2d');";
+  script += "chart = new Chart(ctx, {";
+  script += "type: 'line',";
+  script += "data: { labels: [], datasets: [";
+  script += "{ label: 'Voltage (V)', data: [], borderColor: '#2196F3', backgroundColor: 'rgba(33, 150, 243, 0.1)', borderWidth: 2, fill: false, yAxisID: 'voltage' },";
+  script += "{ label: 'Temperature (°C)', data: [], borderColor: '#FF6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', borderWidth: 2, fill: false, yAxisID: 'temperature' }";
+  script += "] },";
+  script += "options: { responsive: true, maintainAspectRatio: false, scales: { ";
+  script += "x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Time (ms)' } }, ";
+  script += "voltage: { type: 'linear', position: 'left', title: { display: true, text: 'Voltage (V)' }, min: 0, max: 1 }, ";
+  script += "temperature: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (°C)' } }";
+  script += "}, plugins: { legend: { display: true } }, animation: { duration: 0 } }";
+  script += "});";
+  script += "document.getElementById('chartStatus').textContent = 'Active (Dual Sensor)';";
+  script += "document.getElementById('chartStatus').style.color = 'green';";
+  script += "logDebug('Dual sensor chart initialized successfully');";
+  script += "} catch(e) {";
+  script += "logDebug('Error initializing chart: ' + e.message);";
+  script += "document.getElementById('chartStatus').textContent = 'Error: ' + e.message;";
+  script += "document.getElementById('chartStatus').style.color = 'red';";
+  script += "chart = null;";
+  script += "}";
+  script += "}";
   
   // Continue with WebSocket and other functions...
-  html += "function initWebSocket() {";
-  html += "if (connectionAttempts >= maxRetries) {";
-  html += "logDebug('Max WebSocket connection attempts reached, switching to polling mode');";
-  html += "document.getElementById('status').textContent = 'Using HTTP Polling (WebSocket failed)';";
-  html += "document.getElementById('status').className = 'status connected';";
-  html += "startPolling();";
-  html += "return;";
-  html += "}";
+  script += "function initWebSocket() {";
+  script += "if (connectionAttempts >= maxRetries) {";
+  script += "logDebug('Max WebSocket connection attempts reached, switching to polling mode');";
+  script += "document.getElementById('status').textContent = 'Using HTTP Polling (WebSocket failed)';";
+  script += "document.getElementById('status').className = 'status connected';";
+  script += "startPolling();";
+  script += "return;";
+  script += "}";
   
-  html += "connectionAttempts++;";
-  html += "logDebug('WebSocket connection attempt #' + connectionAttempts);";
+  script += "connectionAttempts++;";
+  script += "logDebug('WebSocket connection attempt #' + connectionAttempts);";
   
-  html += "const hostname = window.location.hostname;";
-  html += "const wsUrl = 'ws://' + hostname + ':81';";
-  html += "logDebug('Hostname: ' + hostname);";
-  html += "logDebug('WebSocket URL: ' + wsUrl);";
-  html += "logDebug('Current page URL: ' + window.location.href);";
+  script += "const hostname = window.location.hostname;";
+  script += "const wsUrl = 'ws://' + hostname + ':81';";
+  script += "logDebug('Hostname: ' + hostname);";
+  script += "logDebug('WebSocket URL: ' + wsUrl);";
+  script += "logDebug('Current page URL: ' + window.location.href);";
   
-  html += "try {";
-  html += "ws = new WebSocket(wsUrl);";
-  html += "logDebug('WebSocket object created');";
-  html += "} catch(e) {";
-  html += "logDebug('Error creating WebSocket: ' + e.message);";
-  html += "setTimeout(initWebSocket, 3000);";
-  html += "return;";
-  html += "}";
+  script += "try {";
+  script += "ws = new WebSocket(wsUrl);";
+  script += "logDebug('WebSocket object created');";
+  script += "} catch(e) {";
+  script += "logDebug('Error creating WebSocket: ' + e.message);";
+  script += "setTimeout(initWebSocket, 3000);";
+  script += "return;";
+  script += "}";
   
-  html += "ws.onopen = function() { ";
-  html += "logDebug('WebSocket connected successfully!'); ";
-  html += "document.getElementById('status').textContent = 'WebSocket Connected (Dual Sensor)'; ";
-  html += "document.getElementById('status').className = 'status connected'; ";
-  html += "};";
+  script += "ws.onopen = function() { ";
+  script += "logDebug('WebSocket connected successfully!'); ";
+  script += "document.getElementById('status').textContent = 'WebSocket Connected (Dual Sensor)'; ";
+  script += "document.getElementById('status').className = 'status connected'; ";
+  script += "};";
   
-  html += "ws.onclose = function(event) { ";
-  html += "logDebug('WebSocket closed - Code: ' + event.code + ', Reason: ' + event.reason + ', Clean: ' + event.wasClean); ";
-  html += "document.getElementById('status').textContent = 'Disconnected - Retrying...'; ";
-  html += "document.getElementById('status').className = 'status disconnected'; ";
-  html += "setTimeout(initWebSocket, 2000); ";
-  html += "};";
+  script += "ws.onclose = function(event) { ";
+  script += "logDebug('WebSocket closed - Code: ' + event.code + ', Reason: ' + event.reason + ', Clean: ' + event.wasClean); ";
+  script += "document.getElementById('status').textContent = 'Disconnected - Retrying...'; ";
+  script += "document.getElementById('status').className = 'status disconnected'; ";
+  script += "setTimeout(initWebSocket, 2000); ";
+  script += "};";
   
-  html += "ws.onerror = function(error) { ";
-  html += "logDebug('WebSocket error occurred: ' + JSON.stringify(error)); ";
-  html += "document.getElementById('status').textContent = 'WebSocket Error - Retrying...'; ";
-  html += "document.getElementById('status').className = 'status disconnected'; ";
-  html += "};";
+  script += "ws.onerror = function(error) { ";
+  script += "logDebug('WebSocket error occurred: ' + JSON.stringify(error)); ";
+  script += "document.getElementById('status').textContent = 'WebSocket Error - Retrying...'; ";
+  script += "document.getElementById('status').className = 'status disconnected'; ";
+  script += "};";
   
-  html += "ws.onmessage = function(event) { ";
-  html += "lastMessageTime = Date.now(); ";
-  html += "logDebug('WebSocket message received: ' + event.data); ";
-  html += "if (loggingEnabled) { ";
-  html += "try { ";
-  html += "const data = JSON.parse(event.data); ";
-  html += "if (data.type === 'reading') addSensorReading(data.timestamp, data.voltage, data.temperature, data); ";
-  html += "} catch(e) { logDebug('Error parsing message: ' + e.message); } ";
-  html += "} ";
-  html += "};";
+  script += "ws.onmessage = function(event) { ";
+  script += "lastMessageTime = Date.now(); ";
+  script += "logDebug('WebSocket message received: ' + event.data); ";
+  script += "if (loggingEnabled) { ";
+  script += "try { ";
+  script += "const data = JSON.parse(event.data); ";
+  script += "if (data.type === 'reading') addSensorReading(data.timestamp, data.voltage, data.temperature, data); ";
+  script += "} catch(e) { logDebug('Error parsing message: ' + e.message); } ";
+  script += "} ";
+  script += "};"
   html += "}";
   
   html += "function startPolling() {";
@@ -1849,7 +1899,7 @@ String getIndexHTML() {
   html += "logDebug('All dual sensor and heater control initialization complete'); ";
   html += "};";
   
-  html += "</script></body></html>";
+  script += "</script>";
   
-  return html;
+  return script;
 }
