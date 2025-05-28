@@ -44,10 +44,10 @@ bool heaterEnabled = false;
 bool relayState = false;
 unsigned long relayOnTime = 0;
 const unsigned long MAX_HEATER_TIME = 600000; // 10 min safety timeout
-const float MAX_SAFE_TEMPERATURE = 80.0; // Maximum safe temperature in °C
+const float MAX_SAFE_TEMPERATURE = 120.0; // Maximum safe temperature in °C
 
 // PID Controller variables
-float targetTemperature = 25.0; // Default target temperature
+float targetTemperature = 65.0; // Default target temperature
 bool pidEnabled = false;
 float pidKp = 2.0;  // Proportional gain
 float pidKi = 0.5;  // Integral gain
