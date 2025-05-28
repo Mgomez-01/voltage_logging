@@ -5,6 +5,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <math.h>  // For thermistor calculations
+#include <Ticker.h>  // For hardware timer-based safety system
 
 // Fallback definition for A0 if not defined (for IDE/linter support)
 #ifndef A0
@@ -102,6 +103,15 @@ unsigned long totalReadings = 0;
 unsigned long totalWebSocketMessages = 0;
 unsigned long connectedClients = 0;
 
+// Hardware-based Safety System
+Ticker safetyTimer;           // Hardware timer for safety checks
+Ticker watchdogTimer;         // Hardware watchdog timer
+volatile bool systemAlive = true;     // Watchdog heartbeat flag
+volatile unsigned long lastSafetyCheck = 0;  // Last safety check timestamp
+volatile bool emergencyShutdown = false;     // Emergency shutdown flag
+const unsigned long SAFETY_CHECK_INTERVAL = 500;  // Safety check every 500ms
+const unsigned long WATCHDOG_TIMEOUT = 10000;     // 10 second watchdog timeout
+
 // Function declarations
 void setupMultiplexer();
 void selectMuxChannel(int channel);
@@ -132,6 +142,13 @@ void handlePIDEnable();
 void handlePIDDisable();
 void handlePIDParams();
 void handleHeaterStatus();
+
+// Hardware Safety System functions
+void ICACHE_RAM_ATTR hardwareSafetyCheck();
+void ICACHE_RAM_ATTR watchdogCheck();
+void initializeSafetySystem();
+void feedWatchdog();
+void emergencyShutdownSystem();
 
 void setup() {
   Serial.begin(115200);
@@ -242,6 +259,12 @@ void setup() {
   initializeDataFile();
   Serial.println("OK");
   
+  // Initialize Hardware Safety System
+  Serial.print("Initializing hardware safety system... ");
+  initializeSafetySystem();
+  Serial.println("OK");
+  Serial.println("Hardware safety: Independent timer-based checks active");
+  
   Serial.println("===============================================");
   Serial.println("SETUP COMPLETE - READY FOR CONNECTIONS");
   Serial.println("===============================================");
@@ -260,15 +283,27 @@ void setup() {
   Serial.println("   Relay on GPIO16 (D0)");
   Serial.println("   PID control available");
   Serial.println("   Safety timeout: 10 minutes");
+  Serial.println("   ⚡ HARDWARE SAFETY SYSTEM ACTIVE");
+  Serial.println("   ⚡ Independent timer-based monitoring");
+  Serial.println("   ⚡ Watchdog protection enabled");
   Serial.println("===============================================");
   Serial.println();
 }
 
 void loop() {
+  // Feed watchdog to show system is alive
+  feedWatchdog();
+  
+  // Check for emergency shutdown
+  if (emergencyShutdown) {
+    emergencyShutdownSystem();
+    return; // Skip normal operations during emergency
+  }
+  
   server.handleClient();
   webSocket.loop();
   
-  // Safety checks (always running)
+  // Legacy safety checks (backup to hardware timer)
   checkSafetyTimeout();
   
   // Only sample when logging is enabled
@@ -743,35 +778,42 @@ void setRelayState(bool state) {
 }
 
 void checkSafetyTimeout() {
-  // Check heater timeout
-  if (relayState && millis() - relayOnTime > MAX_HEATER_TIME) {
-    setRelayState(false);
-    heaterEnabled = false;
-    pidEnabled = false;
-    Serial.println("SAFETY: Heater timeout - forced OFF");
+  // Enhanced safety checks that work with current sensor readings
+  // This is a backup to the hardware timer-based safety system
+  
+  // Check if hardware safety system is working
+  if (millis() - lastSafetyCheck > SAFETY_CHECK_INTERVAL * 3) {
+    Serial.println("WARNING: Hardware safety system not responding!");
+    // Force emergency shutdown as backup
+    emergencyShutdown = true;
   }
   
-  // Check temperature limit
+  // Temperature safety (requires sensor readings)
   if (bufferIndex > 0 || bufferFull) {
     int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
     float currentTemp = readings[idx].temperature;
     
+    // Over-temperature protection
     if (currentTemp > MAX_SAFE_TEMPERATURE) {
-      setRelayState(false);
-      heaterEnabled = false;
-      pidEnabled = false;
       Serial.print("SAFETY: Over-temperature shutdown! Temp=");
       Serial.print(currentTemp);
       Serial.println("°C");
+      emergencyShutdown = true;
     }
     
-    // Check for sensor failure
-    if (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200) {
-      setRelayState(false);
-      heaterEnabled = false;
-      pidEnabled = false;
-      Serial.println("SAFETY: Temperature sensor failure - heater disabled");
+    // Sensor failure detection
+    if (relayState && (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200)) {
+      Serial.println("SAFETY: Temperature sensor failure - emergency shutdown");
+      emergencyShutdown = true;
     }
+  }
+  
+  // If emergency shutdown was triggered, ensure immediate action
+  if (emergencyShutdown) {
+    digitalWrite(RELAY_PIN, LOW);  // Force heater OFF immediately
+    relayState = false;
+    heaterEnabled = false;
+    pidEnabled = false;
   }
 }
 
@@ -931,11 +973,99 @@ void handleHeaterStatus() {
   server.send(200, "application/json", jsonString);
 }
 
+// Hardware Safety System Implementation
+
+void ICACHE_RAM_ATTR hardwareSafetyCheck() {
+  // This runs in hardware timer - keep it fast and simple!
+  lastSafetyCheck = millis();
+  
+  // Critical safety check: heater timeout
+  if (relayState && millis() - relayOnTime > MAX_HEATER_TIME) {
+    digitalWrite(RELAY_PIN, LOW);  // Direct GPIO write - fastest way
+    relayState = false;
+    heaterEnabled = false;
+    pidEnabled = false;
+    emergencyShutdown = true;
+  }
+  
+  // Temperature safety will be checked when we have current readings
+  // Cannot safely read ADC from timer interrupt
+}
+
+void ICACHE_RAM_ATTR watchdogCheck() {
+  // Check if main loop is feeding the watchdog
+  if (!systemAlive) {
+    // Main loop is not responding - emergency shutdown
+    digitalWrite(RELAY_PIN, LOW);  // Force heater OFF
+    emergencyShutdown = true;
+    // System will reset via ESP8266 hardware watchdog
+  }
+  systemAlive = false;  // Reset flag - main loop must set it
+}
+
+void initializeSafetySystem() {
+  // Enable ESP8266 hardware watchdog (last resort)
+  ESP.wdtEnable(WATCHDOG_TIMEOUT);
+  
+  // Start hardware timer for safety checks
+  safetyTimer.attach_ms(SAFETY_CHECK_INTERVAL, hardwareSafetyCheck);
+  
+  // Start watchdog check timer
+  watchdogTimer.attach_ms(1000, watchdogCheck);  // Check every second
+  
+  // Initialize safety state
+  systemAlive = true;
+  emergencyShutdown = false;
+  lastSafetyCheck = millis();
+}
+
+void feedWatchdog() {
+  // Called from main loop to show system is alive
+  systemAlive = true;
+  ESP.wdtFeed();  // Feed hardware watchdog
+}
+
+void emergencyShutdownSystem() {
+  // Handle emergency shutdown state
+  static unsigned long lastShutdownMessage = 0;
+  
+  // Ensure heater is OFF
+  digitalWrite(RELAY_PIN, LOW);
+  relayState = false;
+  heaterEnabled = false;
+  pidEnabled = false;
+  
+  // Print emergency message (rate limited)
+  if (millis() - lastShutdownMessage > 5000) {
+    Serial.println("*** EMERGENCY SHUTDOWN ACTIVE ***");
+    Serial.println("*** HEATER DISABLED - SYSTEM SAFE ***");
+    Serial.println("*** Restart required to resume operation ***");
+    lastShutdownMessage = millis();
+  }
+  
+  // Still handle basic web requests to show status
+  server.handleClient();
+}
+
 void printDebugStats() {
   Serial.println("=== DUAL SENSOR DEBUG STATS ===");
   Serial.print("Uptime: ");
   Serial.print(millis() / 1000);
   Serial.println(" seconds");
+  
+  // Safety System Status
+  Serial.println("HARDWARE SAFETY SYSTEM:");
+  Serial.print("  Status: ");
+  if (emergencyShutdown) {
+    Serial.println("*** EMERGENCY SHUTDOWN ACTIVE ***");
+  } else {
+    Serial.println("Active and monitoring");
+  }
+  Serial.print("  Last safety check: ");
+  Serial.print((millis() - lastSafetyCheck) / 1000);
+  Serial.println(" seconds ago");
+  Serial.print("  Watchdog: ");
+  Serial.println(systemAlive ? "Fed" : "STARVED");
   
   Serial.print("Data Logging: ");
   Serial.println(dataLoggingEnabled ? "ENABLED" : "PAUSED");
