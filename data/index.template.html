@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP8266 Dual Sensor Logger with Heater Control</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; color: #333; }
+        .controls { text-align: center; margin-bottom: 20px; }
+        .btn { background-color: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 0 5px; text-decoration: none; display: inline-block; }
+        .btn:hover { background-color: #45a049; }
+        .btn.danger { background-color: #f44336; }
+        .btn.danger:hover { background-color: #da190b; }
+        .btn.warning { background-color: #ff9800; }
+        .btn.warning:hover { background-color: #e68900; }
+        .btn:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .status { text-align: center; margin-bottom: 20px; padding: 10px; border-radius: 4px; }
+        .status.connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .status.disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .chart-container { width: 100%; height: 400px; margin-bottom: 30px; }
+        .log-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background-color: #f9f9f9; font-family: monospace; font-size: 12px; }
+        .current-readings { text-align: center; margin-bottom: 20px; }
+        .reading { display: inline-block; margin: 0 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border: 2px solid #dee2e6; }
+        .reading-value { font-size: 24px; font-weight: bold; color: #2196F3; }
+        .reading-label { font-size: 14px; color: #666; margin-top: 5px; }
+        .stats { display: flex; justify-content: space-around; margin-bottom: 20px; flex-wrap: wrap; }
+        .stat { text-align: center; margin: 5px; }
+        .stat-value { font-size: 18px; font-weight: bold; color: #4CAF50; }
+        .stat-label { font-size: 12px; color: #666; }
+        .debug { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; }
+        .control-panel { background-color: #f8f9fa; border: 2px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .control-panel h3 { margin-top: 0; color: #495057; }
+        .heater-status { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-left: 10px; vertical-align: middle; }
+        .heater-on { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }
+        .heater-off { background-color: #666666; }
+        .pid-params { margin-top: 10px; }
+        .pid-params input { width: 60px; margin: 0 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        .temp-input { width: 80px; padding: 5px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>ESP8266 Dual Sensor Logger with Heater Control</h1>
+            <p>Real-time voltage and temperature monitoring with PID heater control</p>
+        </div>
+
+        <div class="debug">
+            <strong>Debug Info:</strong><br>
+            ESP8266 IP: {{WIFI_IP}}<br>
+            WebSocket Port: 81<br>
+            ADC Pin: A0 (pin {{ADC_PIN_NUM}}) via CD74HC4067<br>
+            Channel 0: Voltage Sensor | Channel 1: 100k Thermistor<br>
+            Heater Relay: GPIO16 (D0)<br>
+            Uptime: <span id="uptime">0</span> seconds<br>
+            Chart Status: <span id="chartStatus">Checking...</span><br>
+            Logging Status: <span id="loggingStatus">{{LOGGING_STATUS_TEXT_INITIAL}}</span><br>
+            Connection Status: <span id="connectionDebug">Initializing...</span>
+        </div>
+
+        <div style="text-align:center;margin:20px 0;padding:20px;background-color:#f8f9fa;border-radius:8px;border:2px solid #dee2e6;">
+            <h3 style="margin-top:0;color:#495057;">Data Logging Control</h3>
+            <div style="font-size:18px;margin:10px 0;">Status: <span id="mainLoggingStatus" style="font-weight:bold;color:{{LOGGING_STATUS_COLOR_INITIAL}};">{{LOGGING_STATUS_TEXT_INITIAL}}</span></div>
+            <button onclick="startLogging()" class="btn" id="startBtn" style="background-color:#28a745;margin:5px;" {{START_LOGGING_DISABLED_ATTR}}>▶ Start Logging</button>
+            <button onclick="stopLogging()" class="btn" id="stopBtn" style="background-color:#dc3545;margin:5px;" {{STOP_LOGGING_DISABLED_ATTR}}>⏸ Stop Logging</button>
+            <div style="font-size:14px;color:#6c757d;margin-top:10px;">{{LOGGING_DESCRIPTION_INITIAL}}</div>
+        </div>
+
+        <div id="status" class="status disconnected">Connecting to WebSocket...</div>
+
+        <div class="control-panel">
+            <h3>🔥 Heater Control</h3>
+            <div style="margin-bottom: 15px;">
+                Relay Status: <span id="relayStatus" style="font-weight: bold;">{{RELAY_STATUS_TEXT_INITIAL}}</span>
+                <span id="heaterIndicator" class="heater-status {{HEATER_INDICATOR_CLASS_INITIAL}}"></span>
+            </div>
+            <div style="margin-bottom: 15px;">
+                Runtime: <span id="heaterRuntime">0:00:00</span>
+                | Safety Timeout: 10 minutes
+            </div>
+            <button onclick="relayOn()" class="btn" id="relayOnBtn">🔥 Turn ON</button>
+            <button onclick="relayOff()" class="btn danger" id="relayOffBtn">⏹ Turn OFF</button>
+            <button onclick="emergencyStop()" class="btn danger" style="margin-left: 20px;">⚠️ EMERGENCY STOP</button>
+        </div>
+
+        <div class="control-panel">
+            <h3>🌡️ Temperature Control</h3>
+            <div style="margin-bottom: 15px;">
+                Current: <span id="currentTemp" style="font-size: 20px; font-weight: bold; color: #2196F3;">--</span>°C
+                | Target: <input type="number" id="targetTempInput" class="temp-input" value="{{TARGET_TEMP_INITIAL}}" min="0" max="{{MAX_SAFE_TEMP_VALUE}}" step="0.5">
+                <button onclick="setTargetTemp()" class="btn" style="padding: 5px 15px;">Set</button>
+            </div>
+            <div style="margin-bottom: 15px;">
+                PID Control: <span id="pidStatus" style="font-weight: bold;">{{PID_STATUS_TEXT_INITIAL}}</span>
+                | Output: <span id="pidOutputValue">{{PID_OUTPUT_INITIAL}}</span>%
+            </div>
+            <button onclick="enablePID()" class="btn" id="pidEnableBtn">▶ Enable PID</button>
+            <button onclick="disablePID()" class="btn warning" id="pidDisableBtn">⏸ Manual Mode</button>
+            <div class="pid-params">
+                <strong>PID Parameters:</strong>
+                Kp: <input type="number" id="kpInput" value="{{PID_KP_INITIAL}}" step="0.1">
+                Ki: <input type="number" id="kiInput" value="{{PID_KI_INITIAL}}" step="0.1">
+                Kd: <input type="number" id="kdInput" value="{{PID_KD_INITIAL}}" step="0.1">
+                <button onclick="updatePIDParams()" class="btn" style="margin-left: 10px;">Update</button>
+            </div>
+        </div>
+
+        <div class="current-readings">
+            <div class="reading">
+                <div class="reading-value" id="currentVoltage">--</div>
+                <div class="reading-label">Voltage (V)</div>
+            </div>
+            <div class="reading">
+                <div class="reading-value" id="currentTemperature">--</div>
+                <div class="reading-label">Temperature (°C)</div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat"><div class="stat-value" id="minVoltage">--</div><div class="stat-label">Min Voltage (V)</div></div>
+            <div class="stat"><div class="stat-value" id="maxVoltage">--</div><div class="stat-label">Max Voltage (V)</div></div>
+            <div class="stat"><div class="stat-value" id="avgVoltage">--</div><div class="stat-label">Avg Voltage (V)</div></div>
+            <div class="stat"><div class="stat-value" id="minTemperature">--</div><div class="stat-label">Min Temp (°C)</div></div>
+            <div class="stat"><div class="stat-value" id="maxTemperature">--</div><div class="stat-label">Max Temp (°C)</div></div>
+            <div class="stat"><div class="stat-value" id="avgTemperature">--</div><div class="stat-label">Avg Temp (°C)</div></div>
+            <div class="stat"><div class="stat-value" id="sampleCount">0</div><div class="stat-label">Samples</div></div>
+        </div>
+
+        <div class="controls">
+            <a href="/data.csv" class="btn">Download Data</a>
+            <button onclick="clearData()" class="btn danger">Clear Data</button>
+            <button onclick="toggleLogging()" class="btn" id="logToggle">Pause Logging</button>
+        </div>
+
+        <div class="chart-container"><canvas id="sensorChart"></canvas></div>
+        <div class="log-container" id="logContainer"><div>Sensor readings will appear here...</div></div>
+    </div>
+
+    <script>
+        let ws, chart, loggingEnabled = true, startTime = Date.now();
+        let connectionAttempts = 0, lastMessageTime = 0, maxRetries = 10;
+        let voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        let tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        let heaterState = {{JS_HEATER_STATE_INITIAL}}; // Boolean
+        let pidEnabled = {{JS_PID_ENABLED_INITIAL}};   // Boolean
+        let heaterStartTime = 0;
+
+        function updateDebugInfo() {
+            document.getElementById('uptime').textContent = Math.floor((Date.now() - startTime) / 1000);
+            let status = 'Attempts: ' + connectionAttempts + '/' + maxRetries;
+            if (lastMessageTime > 0) status += ', Last message: ' + Math.floor((Date.now() - lastMessageTime) / 1000) + 's ago';
+            document.getElementById('connectionDebug').textContent = status;
+        }
+
+        function logDebug(msg) { console.log('[DEBUG] ' + msg); }
+
+        function initChart() {
+            logDebug('Checking if Chart.js is available...');
+            if (typeof Chart === 'undefined') {
+                logDebug('Chart.js not loaded - chart will be disabled');
+                document.getElementById('chartStatus').textContent = 'Disabled (no internet)';
+                document.getElementById('chartStatus').style.color = 'orange';
+                document.getElementById('sensorChart').style.display = 'none';
+                const chartContainer = document.querySelector('.chart-container');
+                if (chartContainer) chartContainer.innerHTML = '<div style="text-align:center;padding:20px;background:#f0f0f0;border-radius:4px;color:#666;"><strong>Real-time Chart Unavailable</strong><br>Chart.js requires internet connection<br>Sensor readings still work below</div>';
+                return;
+            }
+            logDebug('Chart.js loaded successfully, initializing dual sensor chart...');
+            try {
+                const ctx = document.getElementById('sensorChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: [], datasets: [
+                        { label: 'Voltage (V)', data: [], borderColor: '#2196F3', backgroundColor: 'rgba(33, 150, 243, 0.1)', borderWidth: 2, fill: false, yAxisID: 'voltage' },
+                        { label: 'Temperature (°C)', data: [], borderColor: '#FF6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', borderWidth: 2, fill: false, yAxisID: 'temperature' }
+                    ] },
+                    options: { responsive: true, maintainAspectRatio: false, scales: { 
+                        x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Time (ms)' } }, 
+                        voltage: { type: 'linear', position: 'left', title: { display: true, text: 'Voltage (V)' }, min: 0, max: 1 }, 
+                        temperature: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (°C)' } }
+                    }, plugins: { legend: { display: true } }, animation: { duration: 0 } }
+                });
+                document.getElementById('chartStatus').textContent = 'Active (Dual Sensor)';
+                document.getElementById('chartStatus').style.color = 'green';
+                logDebug('Dual sensor chart initialized successfully');
+            } catch(e) {
+                logDebug('Error initializing chart: ' + e.message);
+                document.getElementById('chartStatus').textContent = 'Error: ' + e.message;
+                document.getElementById('chartStatus').style.color = 'red';
+                chart = null;
+            }
+        }
+
+        function initWebSocket() {
+            if (connectionAttempts >= maxRetries) {
+                logDebug('Max WebSocket connection attempts reached, switching to polling mode');
+                document.getElementById('status').textContent = 'Using HTTP Polling (WebSocket failed)';
+                document.getElementById('status').className = 'status connected';
+                startPolling();
+                return;
+            }
+            connectionAttempts++;
+            logDebug('WebSocket connection attempt #' + connectionAttempts);
+            const hostname = window.location.hostname;
+            const wsUrl = 'ws://' + hostname + ':81';
+            logDebug('Hostname: ' + hostname + ', WebSocket URL: ' + wsUrl + ', Page URL: ' + window.location.href);
+            try {
+                ws = new WebSocket(wsUrl);
+                logDebug('WebSocket object created');
+            } catch(e) {
+                logDebug('Error creating WebSocket: ' + e.message);
+                setTimeout(initWebSocket, 3000);
+                return;
+            }
+            ws.onopen = function() { 
+                logDebug('WebSocket connected successfully!'); 
+                document.getElementById('status').textContent = 'WebSocket Connected (Dual Sensor)'; 
+                document.getElementById('status').className = 'status connected'; 
+            };
+            ws.onclose = function(event) { 
+                logDebug('WebSocket closed - Code: ' + event.code + ', Reason: ' + event.reason + ', Clean: ' + event.wasClean); 
+                document.getElementById('status').textContent = 'Disconnected - Retrying...'; 
+                document.getElementById('status').className = 'status disconnected'; 
+                setTimeout(initWebSocket, 2000); 
+            };
+            ws.onerror = function(error) { 
+                logDebug('WebSocket error occurred: ' + JSON.stringify(error)); 
+                document.getElementById('status').textContent = 'WebSocket Error - Retrying...'; 
+                document.getElementById('status').className = 'status disconnected'; 
+            };
+            ws.onmessage = function(event) { 
+                lastMessageTime = Date.now(); 
+                logDebug('WebSocket message received: ' + event.data); 
+                if (loggingEnabled) { 
+                    try { 
+                        const data = JSON.parse(event.data); 
+                        if (data.type === 'reading') addSensorReading(data.timestamp, data.voltage, data.temperature, data); 
+                    } catch(e) { logDebug('Error parsing message: ' + e.message); } 
+                } 
+            };
+        }
+        
+        function startPolling() {
+            logDebug('Starting HTTP polling mode...');
+            setInterval(function() {
+                fetch('/status').then(function(response) {
+                    return response.json();
+                }).then(function(data) {
+                    if (data.voltage !== undefined && data.temperature !== undefined) {
+                        addSensorReading(data.timestamp, data.voltage, data.temperature, data);
+                    }
+                }).catch(function(error) {
+                    logDebug('Polling error: ' + error.message);
+                });
+            }, 500);
+        }
+        
+        function addSensorReading(timestamp, voltage, temperature, data) {
+            document.getElementById('currentVoltage').textContent = voltage.toFixed(4);
+            document.getElementById('currentTemperature').textContent = temperature.toFixed(2);
+            document.getElementById('currentTemp').textContent = temperature.toFixed(2);
+        
+            if (data) {
+                updateHeaterStatus(data.heaterState, data.targetTemp, data.pidEnabled, data.pidOutput);
+            }
+        
+            voltageStats.min = Math.min(voltageStats.min, voltage);
+            voltageStats.max = Math.max(voltageStats.max, voltage);
+            voltageStats.sum += voltage;
+            voltageStats.count++;
+        
+            if (temperature > -50 && temperature < 150) {
+                tempStats.min = Math.min(tempStats.min, temperature);
+                tempStats.max = Math.max(tempStats.max, temperature);
+                tempStats.sum += temperature;
+                tempStats.count++;
+            }
+        
+            document.getElementById('minVoltage').textContent = voltageStats.min.toFixed(4);
+            document.getElementById('maxVoltage').textContent = voltageStats.max.toFixed(4);
+            document.getElementById('avgVoltage').textContent = (voltageStats.sum / voltageStats.count).toFixed(4);
+            document.getElementById('sampleCount').textContent = voltageStats.count;
+        
+            if (tempStats.count > 0) {
+                document.getElementById('minTemperature').textContent = tempStats.min.toFixed(2);
+                document.getElementById('maxTemperature').textContent = tempStats.max.toFixed(2);
+                document.getElementById('avgTemperature').textContent = (tempStats.sum / tempStats.count).toFixed(2);
+            } else {
+                document.getElementById('minTemperature').textContent = 'N/A';
+                document.getElementById('maxTemperature').textContent = 'N/A';
+                document.getElementById('avgTemperature').textContent = 'N/A';
+            }
+        
+            if (chart && typeof chart.update === 'function') {
+                if (chart.data.labels.length > 500) { 
+                    chart.data.labels.shift(); 
+                    chart.data.datasets[0].data.shift(); 
+                    chart.data.datasets[1].data.shift(); 
+                }
+                chart.data.labels.push(timestamp);
+                chart.data.datasets[0].data.push(voltage);
+                chart.data.datasets[1].data.push(temperature);
+                chart.update('none');
+            } else {
+                logDebug('Chart not available, skipping chart update');
+            }
+        
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            let logText = new Date(timestamp).toLocaleTimeString() + ' - ' + voltage.toFixed(4) + 'V | ' + temperature.toFixed(2) + '°C';
+            if (data && data.heaterState !== undefined) {
+                logText += ' | Heater: ' + (data.heaterState ? 'ON' : 'OFF');
+                if (data.pidEnabled) logText += ' | PID: ' + data.pidOutput.toFixed(1) + '%';
+            }
+            logEntry.textContent = logText;
+            logContainer.appendChild(logEntry);
+            while (logContainer.children.length > 1000) logContainer.removeChild(logContainer.firstChild);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function clearData() {
+            if (confirm('Are you sure you want to clear all sensor data?')) {
+                fetch('/clear').then(function() {
+                    if (chart && typeof chart.update === 'function') {
+                        chart.data.labels = []; chart.data.datasets[0].data = []; chart.data.datasets[1].data = []; chart.update();
+                    } else {
+                        logDebug('Chart not available for clearing');
+                    }
+                    voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+                    tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+                    ['minVoltage', 'maxVoltage', 'avgVoltage', 'minTemperature', 'maxTemperature', 'avgTemperature'].forEach(id => document.getElementById(id).textContent = '--');
+                    document.getElementById('sampleCount').textContent = '0';
+                    document.getElementById('currentVoltage').textContent = '--';
+                    document.getElementById('currentTemperature').textContent = '--';
+                    document.getElementById('logContainer').innerHTML = '<div>Data cleared. New sensor readings will appear here...</div>';
+                    alert('Sensor data cleared successfully');
+                }).catch(function() { alert('Error clearing data'); });
+            }
+        }
+        
+        function toggleLogging() {
+            loggingEnabled = !loggingEnabled;
+            const btn = document.getElementById('logToggle');
+            btn.textContent = loggingEnabled ? 'Pause Logging' : 'Resume Logging';
+            btn.style.backgroundColor = loggingEnabled ? '#4CAF50' : '#ff9800';
+        }
+        
+        function startLogging() {
+            logDebug('Starting dual sensor logging...');
+            fetch('/start').then(function(response) {
+                return response.text();
+            }).then(function(data) {
+                logDebug('Start logging response: ' + data);
+                document.getElementById('mainLoggingStatus').textContent = 'ACTIVE';
+                document.getElementById('mainLoggingStatus').style.color = '#28a745';
+                document.getElementById('loggingStatus').textContent = 'ACTIVE';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                alert('Dual sensor logging started');
+            }).catch(function(error) {
+                logDebug('Error starting logging: ' + error.message);
+                alert('Error starting logging');
+            });
+        }
+        
+        function stopLogging() {
+            logDebug('Stopping dual sensor logging...');
+            fetch('/stop').then(function(response) {
+                return response.text();
+            }).then(function(data) {
+                logDebug('Stop logging response: ' + data);
+                document.getElementById('mainLoggingStatus').textContent = 'PAUSED';
+                document.getElementById('mainLoggingStatus').style.color = '#dc3545';
+                document.getElementById('loggingStatus').textContent = 'PAUSED';
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                alert('Dual sensor logging stopped');
+            }).catch(function(error) {
+                logDebug('Error stopping logging: ' + error.message);
+                alert('Error stopping logging');
+            });
+        }
+        
+        function updateHeaterStatus(state, target, pidOn, output) {
+            heaterState = state;
+            pidEnabled = pidOn;
+            document.getElementById('relayStatus').textContent = state ? 'ON' : 'OFF';
+            document.getElementById('heaterIndicator').className = 'heater-status ' + (state ? 'heater-on' : 'heater-off');
+            document.getElementById('pidStatus').textContent = pidOn ? 'ENABLED' : 'DISABLED';
+            document.getElementById('pidOutputValue').textContent = output.toFixed(1);
+            if (state && heaterStartTime === 0) heaterStartTime = Date.now();
+            if (!state) heaterStartTime = 0;
+        }
+        
+        function updateHeaterRuntime() {
+            if (heaterState && heaterStartTime > 0) {
+                const runtime = Math.floor((Date.now() - heaterStartTime) / 1000);
+                const hours = Math.floor(runtime / 3600);
+                const minutes = Math.floor((runtime % 3600) / 60);
+                const seconds = runtime % 60;
+                document.getElementById('heaterRuntime').textContent = 
+                    hours + ':' + minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
+            } else {
+                document.getElementById('heaterRuntime').textContent = '0:00:00';
+            }
+        }
+        
+        function relayOn() { 
+            if (heaterState) { alert('Heater is already ON'); return; } 
+            if (!confirm('Turn heater ON? This will enable manual heater control.')) return; 
+            logDebug('Turning relay ON...'); 
+            const onBtn = document.getElementById('relayOnBtn'); 
+            const offBtn = document.getElementById('relayOffBtn'); 
+            if (onBtn) onBtn.disabled = true; 
+            fetch('/relay/on').then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('Relay ON response: ' + data); 
+                heaterState = true; 
+                heaterStartTime = Date.now(); 
+                const statusEl = document.getElementById('relayStatus'); 
+                const indicatorEl = document.getElementById('heaterIndicator'); 
+                if (statusEl) statusEl.textContent = 'ON'; 
+                if (indicatorEl) indicatorEl.className = 'heater-status heater-on'; 
+                alert('Heater turned ON successfully'); 
+            }).catch(function(error) { 
+                logDebug('Error turning relay on: ' + error.message); 
+                if (onBtn) onBtn.disabled = false; 
+                alert('Error turning heater on: ' + error.message); 
+            }).finally(() => {
+                if (onBtn) onBtn.disabled = false; // Re-enable regardless of outcome, unless PID takes over
+                if (offBtn) offBtn.disabled = false;
+            }); 
+        }
+        
+        function relayOff() { 
+            if (!heaterState) { alert('Heater is already OFF'); return; } 
+            logDebug('Turning relay OFF...'); 
+            const onBtn = document.getElementById('relayOnBtn'); 
+            const offBtn = document.getElementById('relayOffBtn'); 
+            if (offBtn) offBtn.disabled = true; 
+            fetch('/relay/off').then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('Relay OFF response: ' + data); 
+                heaterState = false; 
+                heaterStartTime = 0; 
+                const statusEl = document.getElementById('relayStatus'); 
+                const indicatorEl = document.getElementById('heaterIndicator'); 
+                if (statusEl) statusEl.textContent = 'OFF'; 
+                if (indicatorEl) indicatorEl.className = 'heater-status heater-off'; 
+                alert('Heater turned OFF successfully'); 
+            }).catch(function(error) { 
+                logDebug('Error turning relay off: ' + error.message); 
+                if (offBtn) offBtn.disabled = false; 
+                alert('Error turning heater off: ' + error.message); 
+            }).finally(() => {
+                if (onBtn) onBtn.disabled = false;
+                if (offBtn) offBtn.disabled = false; // Re-enable regardless of outcome
+            });
+        }
+        
+        function emergencyStop() { 
+            if (!confirm('EMERGENCY STOP: Turn off heater and disable PID?')) return; 
+            logDebug('EMERGENCY STOP initiated...'); 
+            const onBtn = document.getElementById('relayOnBtn'); 
+            const offBtn = document.getElementById('relayOffBtn'); 
+            const enableBtn = document.getElementById('pidEnableBtn'); 
+            const disableBtn = document.getElementById('pidDisableBtn'); 
+            [onBtn, offBtn, enableBtn, disableBtn].forEach(btn => { if (btn) btn.disabled = true; }); 
+            Promise.all([ 
+                fetch('/relay/off').then(r => { if (!r.ok) throw new Error('Relay OFF failed: ' + r.status); return r.text(); }), 
+                fetch('/pid/disable').then(r => { if (!r.ok) throw new Error('PID disable failed: ' + r.status); return r.text(); }) 
+            ]).then(function(responses) { 
+                logDebug('Emergency stop responses: ' + JSON.stringify(responses)); 
+                heaterState = false; 
+                pidEnabled = false; 
+                heaterStartTime = 0; 
+                const statusEl = document.getElementById('relayStatus'); 
+                const pidStatusEl = document.getElementById('pidStatus'); 
+                const indicatorEl = document.getElementById('heaterIndicator'); 
+                if (statusEl) statusEl.textContent = 'OFF'; 
+                if (pidStatusEl) pidStatusEl.textContent = 'DISABLED'; 
+                if (indicatorEl) indicatorEl.className = 'heater-status heater-off'; 
+                if (enableBtn) enableBtn.disabled = false; 
+                if (disableBtn) disableBtn.disabled = true; 
+                [onBtn, offBtn].forEach(btn => { if (btn) btn.disabled = false; }); 
+                alert('⚠️ EMERGENCY STOP COMPLETE\nHeater: OFF\nPID: DISABLED\nSystem is safe.'); 
+            }).catch(function(error) { 
+                logDebug('Emergency stop error: ' + error.message); 
+                [onBtn, offBtn, enableBtn, disableBtn].forEach(btn => { if (btn) btn.disabled = false; }); 
+                alert('⚠️ EMERGENCY STOP ERROR: ' + error.message + '\nCheck system manually!'); 
+            }); 
+        }
+        
+        function setTargetTemp() { 
+            const tempInput = document.getElementById('targetTempInput'); 
+            if (!tempInput) { alert('Temperature input not found'); return; } 
+            const temp = parseFloat(tempInput.value); 
+            if (isNaN(temp) || temp < 0 || temp > {{MAX_SAFE_TEMP_VALUE_JS}}) { 
+                alert('Invalid temperature. Must be between 0 and {{MAX_SAFE_TEMP_VALUE_JS}}°C'); 
+                return; 
+            } 
+            logDebug('Setting target temperature to: ' + temp); 
+            fetch('/temp/set?temp=' + temp).then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('Set temperature response: ' + data); 
+                alert('Target temperature set to ' + temp + '°C'); 
+            }).catch(function(error) { 
+                logDebug('Error setting temperature: ' + error.message); 
+                alert('Error setting temperature: ' + error.message); 
+            }); 
+        }
+        
+        function enablePID() { 
+            if (pidEnabled) { alert('PID is already enabled'); return; } 
+            logDebug('Enabling PID control...'); 
+            const enableBtn = document.getElementById('pidEnableBtn'); 
+            const disableBtn = document.getElementById('pidDisableBtn'); 
+            if (enableBtn) enableBtn.disabled = true; 
+            fetch('/pid/enable').then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('PID enable response: ' + data); 
+                pidEnabled = true; 
+                if (enableBtn) enableBtn.disabled = true; 
+                if (disableBtn) disableBtn.disabled = false; 
+                const statusEl = document.getElementById('pidStatus'); 
+                if (statusEl) statusEl.textContent = 'ENABLED'; 
+                alert('PID control enabled successfully'); 
+            }).catch(function(error) { 
+                logDebug('Error enabling PID: ' + error.message); 
+                if (enableBtn) enableBtn.disabled = false; 
+                alert('Error enabling PID: ' + error.message); 
+            }); 
+        }
+        
+        function disablePID() { 
+            if (!pidEnabled) { alert('PID is already disabled'); return; } 
+            logDebug('Disabling PID control...'); 
+            const enableBtn = document.getElementById('pidEnableBtn'); 
+            const disableBtn = document.getElementById('pidDisableBtn'); 
+            if (disableBtn) disableBtn.disabled = true; 
+            fetch('/pid/disable').then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('PID disable response: ' + data); 
+                pidEnabled = false; 
+                if (enableBtn) enableBtn.disabled = false; 
+                if (disableBtn) disableBtn.disabled = true; 
+                const statusEl = document.getElementById('pidStatus'); 
+                if (statusEl) statusEl.textContent = 'DISABLED'; 
+                alert('PID control disabled successfully'); 
+            }).catch(function(error) { 
+                logDebug('Error disabling PID: ' + error.message); 
+                if (disableBtn) disableBtn.disabled = false; 
+                alert('Error disabling PID: ' + error.message); 
+            }); 
+        }
+        
+        function updatePIDParams() { 
+            const kpInput = document.getElementById('kpInput'); 
+            const kiInput = document.getElementById('kiInput'); 
+            const kdInput = document.getElementById('kdInput'); 
+            if (!kpInput || !kiInput || !kdInput) { 
+                alert('PID input fields not found'); return; 
+            } 
+            const kp = parseFloat(kpInput.value); 
+            const ki = parseFloat(kiInput.value); 
+            const kd = parseFloat(kdInput.value); 
+            if (isNaN(kp) || isNaN(ki) || isNaN(kd)) { 
+                alert('Invalid PID parameters. All values must be numbers.'); return; 
+            } 
+            if (kp < 0 || ki < 0 || kd < 0) { 
+                alert('PID parameters cannot be negative'); return; 
+            } 
+            if (kp > 100 || ki > 100 || kd > 100) { 
+                alert('PID parameters too large (max 100 each)'); return; 
+            } 
+            logDebug('Updating PID params: Kp=' + kp + ', Ki=' + ki + ', Kd=' + kd); 
+            fetch('/pid/params?kp=' + kp + '&ki=' + ki + '&kd=' + kd).then(function(response) { 
+                if (!response.ok) throw new Error('HTTP ' + response.status); 
+                return response.text(); 
+            }).then(function(data) { 
+                logDebug('PID params update response: ' + data); 
+                alert('PID parameters updated successfully: Kp=' + kp + ', Ki=' + ki + ', Kd=' + kd); 
+            }).catch(function(error) { 
+                logDebug('Error updating PID params: ' + error.message); 
+                alert('Error updating PID parameters: ' + error.message); 
+            }); 
+        }
+        
+        window.onload = function() { 
+            logDebug('Page loaded, initializing dual sensor components...'); 
+            try { initChart(); } catch(e) { logDebug('Chart initialization failed: ' + e.message); }
+            logDebug('Starting WebSocket initialization...'); 
+            initWebSocket(); 
+            logDebug('Starting debug info updates...'); 
+            setInterval(updateDebugInfo, 1000); 
+            setInterval(updateHeaterRuntime, 1000); 
+            document.getElementById('pidEnableBtn').disabled = pidEnabled; // Use JS var
+            document.getElementById('pidDisableBtn').disabled = !pidEnabled; // Use JS var
+            logDebug('All dual sensor and heater control initialization complete'); 
+        };
+    </script>
+</body>
+</html>
