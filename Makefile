@@ -34,9 +34,9 @@ monitor:
 	@echo "Starting serial monitor (Ctrl+C to exit)..."
 	pio device monitor --baud 115200
 
-# Build, upload, and monitor in one command
-deploy: upload
-	@echo "Deployment complete, starting monitor..."
+# Build, upload filesystem, upload firmware, and monitor in one command
+deploy: upload filesystem
+	@echo "Deployment complete (firmware + filesystem), starting monitor..."
 	@sleep 2
 	$(MAKE) monitor
 
@@ -114,7 +114,7 @@ help:
 	@echo "  build-wemos   - Build for Wemos D1 Mini specifically"
 	@echo "  upload        - Upload to ESP8266"  
 	@echo "  monitor       - Start serial monitor"
-	@echo "  deploy        - Build, upload, and monitor"
+	@echo "  deploy        - Build, upload firmware + filesystem, and monitor"
 	@echo "  clean         - Clean build files"
 	@echo "  install       - Install dependencies"
 	@echo "  update        - Update libraries"
@@ -130,7 +130,7 @@ help:
 	@echo "Quick start:"
 	@echo "  make fix-platform  # Fix platform issues first"
 	@echo "  make setup-lsp     # Setup language server (fixes A0 errors)"
-	@echo "  make deploy        # Build, upload, and monitor"
+	@echo "  make deploy        # Build, upload firmware + filesystem, and monitor"
 	@echo ""
 	@echo "If build fails:"
 	@echo "  make troubleshoot  # Check what's wrong"

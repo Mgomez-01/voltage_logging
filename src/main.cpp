@@ -6,7 +6,6 @@
 #include <ArduinoJson.h>
 #include <math.h>  // For thermistor calculations
 #include <Ticker.h>  // For hardware timer-based safety system
-#include <map>
 
 // Fallback definition for A0 if not defined (for IDE/linter support)
 #ifndef A0
@@ -1226,15 +1225,7 @@ void printDebugStats() {
   Serial.println();
 }
 
-// Function to process templates from LittleFS
-String processTemplate(File& templateFile, const std::map<String, String>& values) {
-    String line = templateFile.readStringUntil('\n');
-    for (auto const& [placeholder, value] : values) {
-        line.replace(placeholder, value);
-    }
-    return line;
-}
-
+// Fast template processing - read entire file and replace all at once
 void sendTemplatedPage(const char* filename) {
     File templateFile = LittleFS.open(filename, "r");
     if (!templateFile) {
@@ -1243,44 +1234,49 @@ void sendTemplatedPage(const char* filename) {
         return;
     }
 
-    // Prepare map of placeholders and their values
-    std::map<String, String> values;
-    values["{{WIFI_IP}}"] = WiFi.softAPIP().toString();
-    values["{{ADC_PIN_NUM}}"] = String(A0);
-    values["{{LOGGING_STATUS_TEXT_INITIAL}}"] = dataLoggingEnabled ? "ACTIVE" : "PAUSED";
-    values["{{LOGGING_STATUS_COLOR_INITIAL}}"] = dataLoggingEnabled ? "#28a745" : "#dc3545";
-    values["{{START_LOGGING_DISABLED_ATTR}}"] = dataLoggingEnabled ? "disabled" : "";
-    values["{{STOP_LOGGING_DISABLED_ATTR}}"] = dataLoggingEnabled ? "" : "disabled";
-    values["{{LOGGING_DESCRIPTION_INITIAL}}"] = dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection";
-    values["{{RELAY_STATUS_TEXT_INITIAL}}"] = relayState ? "ON" : "OFF";
-    values["{{HEATER_INDICATOR_CLASS_INITIAL}}"] = relayState ? "heater-on" : "heater-off";
-    values["{{TARGET_TEMP_INITIAL}}"] = String(targetTemperature, 1);
-    values["{{MAX_SAFE_TEMP_VALUE}}"] = String(MAX_SAFE_TEMPERATURE); // For HTML attribute
-    values["{{MAX_SAFE_TEMP_VALUE_JS}}"] = String(MAX_SAFE_TEMPERATURE); // For JS validation (can be same)
-    values["{{PID_STATUS_TEXT_INITIAL}}"] = pidEnabled ? "ENABLED" : "DISABLED";
-    values["{{PID_OUTPUT_INITIAL}}"] = String(pidOutput, 1);
-    values["{{PID_KP_INITIAL}}"] = String(pidKp, 2);
-    values["{{PID_KI_INITIAL}}"] = String(pidKi, 2);
-    values["{{PID_KD_INITIAL}}"] = String(pidKd, 2);
-    values["{{JS_HEATER_STATE_INITIAL}}"] = relayState ? "true" : "false"; // For JavaScript boolean
-    values["{{JS_PID_ENABLED_INITIAL}}"] = pidEnabled ? "true" : "false";   // For JavaScript boolean
-
-
-    server.setContentLength(CONTENT_LENGTH_UNKNOWN); // Important for chunked response
-    server.send(200, "text/html", ""); // Send headers
-
-    while (templateFile.available()) {
-        // server.sendContent(processTemplate(templateFile, values)); // Simpler, but reads one line at a time
-        // For better performance with large files, consider reading in chunks
-        // For now, line by line is fine for this size template.
-        String line = templateFile.readStringUntil('\n');
-        for (auto const& [placeholder, value] : values) {
-            line.replace(placeholder, value);
-        }
-        server.sendContent(line + "\n"); // Add newline back
-    }
+    // Read entire template into memory at once (much faster)
+    Serial.print("Reading template file (");
+    Serial.print(templateFile.size());
+    Serial.println(" bytes)...");
+    
+    String htmlContent = templateFile.readString();
     templateFile.close();
-    server.sendContent(""); // Finalize chunked response
+    
+    if (htmlContent.length() == 0) {
+        Serial.println("Template file is empty or failed to read");
+        server.send(500, "text/plain", "Internal Server Error: Template file is empty.");
+        return;
+    }
+    
+    Serial.println("Processing template variables...");
+    
+    // Do all replacements in one pass (much faster than line-by-line)
+    htmlContent.replace("{{WIFI_IP}}", WiFi.softAPIP().toString());
+    htmlContent.replace("{{ADC_PIN_NUM}}", String(A0));
+    htmlContent.replace("{{LOGGING_STATUS_TEXT_INITIAL}}", dataLoggingEnabled ? "ACTIVE" : "PAUSED");
+    htmlContent.replace("{{LOGGING_STATUS_COLOR_INITIAL}}", dataLoggingEnabled ? "#28a745" : "#dc3545");
+    htmlContent.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
+    htmlContent.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
+    htmlContent.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection");
+    htmlContent.replace("{{RELAY_STATUS_TEXT_INITIAL}}", relayState ? "ON" : "OFF");
+    htmlContent.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", relayState ? "heater-on" : "heater-off");
+    htmlContent.replace("{{TARGET_TEMP_INITIAL}}", String(targetTemperature, 1));
+    htmlContent.replace("{{MAX_SAFE_TEMP_VALUE}}", String(MAX_SAFE_TEMPERATURE));
+    htmlContent.replace("{{MAX_SAFE_TEMP_VALUE_JS}}", String(MAX_SAFE_TEMPERATURE));
+    htmlContent.replace("{{PID_STATUS_TEXT_INITIAL}}", pidEnabled ? "ENABLED" : "DISABLED");
+    htmlContent.replace("{{PID_OUTPUT_INITIAL}}", String(pidOutput, 1));
+    htmlContent.replace("{{PID_KP_INITIAL}}", String(pidKp, 2));
+    htmlContent.replace("{{PID_KI_INITIAL}}", String(pidKi, 2));
+    htmlContent.replace("{{PID_KD_INITIAL}}", String(pidKd, 2));
+    htmlContent.replace("{{JS_HEATER_STATE_INITIAL}}", relayState ? "true" : "false");
+    htmlContent.replace("{{JS_PID_ENABLED_INITIAL}}", pidEnabled ? "true" : "false");
+    
+    Serial.println("Sending processed template to client...");
+    
+    // Send entire response at once (much faster)
+    server.send(200, "text/html", htmlContent);
+    
+    Serial.println("Template sent successfully");
 }
 
 
