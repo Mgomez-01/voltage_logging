@@ -56,23 +56,23 @@
         </div>
 
         <div class="debug-enhanced" id="connectionDebugPanel">
-            <strong>🔧 CONNECTION DEBUG:</strong><br>
+            <strong>CONNECTION DEBUG:</strong><br>
             <div id="detailedDebug">Initializing connection diagnostics...</div>
         </div>
 
         <div style="text-align:center;margin:20px 0;padding:20px;background-color:#f8f9fa;border-radius:8px;border:2px solid #dee2e6;">
             <h3 style="margin-top:0;color:#495057;">Data Logging Control</h3>
             <div style="font-size:18px;margin:10px 0;">Status: <span id="mainLoggingStatus" style="font-weight:bold;color:{{LOGGING_STATUS_COLOR_INITIAL}};">{{LOGGING_STATUS_TEXT_INITIAL}}</span></div>
-            <button onclick="startLogging()" class="btn" id="startBtn" style="background-color:#28a745;margin:5px;" {{START_LOGGING_DISABLED_ATTR}}>▶ Start Logging</button>
-            <button onclick="stopLogging()" class="btn" id="stopBtn" style="background-color:#dc3545;margin:5px;" {{STOP_LOGGING_DISABLED_ATTR}}>⏸ Stop Logging</button>
-            <button onclick="testConnection()" class="btn" style="background-color:#17a2b8;margin:5px;">🔧 Test Connection</button>
+            <button onclick="startLogging()" class="btn" id="startBtn" style="background-color:#28a745;margin:5px;" {{START_LOGGING_DISABLED_ATTR}}>Start Logging</button>
+            <button onclick="stopLogging()" class="btn" id="stopBtn" style="background-color:#dc3545;margin:5px;" {{STOP_LOGGING_DISABLED_ATTR}}>Stop Logging</button>
+            <button onclick="testConnection()" class="btn" style="background-color:#17a2b8;margin:5px;">Test Connection</button>
             <div style="font-size:14px;color:#6c757d;margin-top:10px;">{{LOGGING_DESCRIPTION_INITIAL}}</div>
         </div>
 
         <div id="status" class="status disconnected">Connecting to WebSocket...</div>
 
         <div class="control-panel">
-            <h3>🔥 Heater Control</h3>
+            <h3>Heater Control</h3>
             <div style="margin-bottom: 15px;">
                 Relay Status: <span id="relayStatus" style="font-weight: bold;">{{RELAY_STATUS_TEXT_INITIAL}}</span>
                 <span id="heaterIndicator" class="heater-status {{HEATER_INDICATOR_CLASS_INITIAL}}"></span>
@@ -81,9 +81,9 @@
                 Runtime: <span id="heaterRuntime">0:00:00</span>
                 | Safety Timeout: 10 minutes
             </div>
-            <button onclick="relayOn()" class="btn" id="relayOnBtn">🔥 Turn ON</button>
-            <button onclick="relayOff()" class="btn danger" id="relayOffBtn">⏹ Turn OFF</button>
-            <button onclick="emergencyStop()" class="btn danger" style="margin-left: 20px;">⚠️ EMERGENCY STOP</button>
+            <button onclick="relayOn()" class="btn" id="relayOnBtn">Turn ON</button>
+            <button onclick="relayOff()" class="btn danger" id="relayOffBtn">Turn OFF</button>
+            <button onclick="emergencyStop()" class="btn danger" style="margin-left: 20px;">EMERGENCY STOP</button>
         </div>
 
         <div class="control-panel">
@@ -97,8 +97,8 @@
                 PID Control: <span id="pidStatus" style="font-weight: bold;">{{PID_STATUS_TEXT_INITIAL}}</span>
                 | Output: <span id="pidOutputValue">{{PID_OUTPUT_INITIAL}}</span>%
             </div>
-            <button onclick="enablePID()" class="btn" id="pidEnableBtn">▶ Enable PID</button>
-            <button onclick="disablePID()" class="btn warning" id="pidDisableBtn">⏸ Manual Mode</button>
+            <button onclick="enablePID()" class="btn" id="pidEnableBtn">Enable PID</button>
+            <button onclick="disablePID()" class="btn warning" id="pidDisableBtn">Manual Mode</button>
             <div class="pid-params">
                 <strong>PID Parameters:</strong>
                 Kp: <input type="number" id="kpInput" value="{{PID_KP_INITIAL}}" step="0.1">
@@ -237,7 +237,7 @@
 
                 ws.onopen = function() {
                     clearTimeout(connectionTimeout);
-                    logDebug('✅ WebSocket connected successfully!');
+                    logDebug('WebSocket connected successfully!');
                     connectionMode = 'websocket_connected';
                     document.getElementById('status').textContent = 'WebSocket Connected (Dual Sensor)';
                     document.getElementById('status').className = 'status connected';
@@ -247,21 +247,21 @@
 
                 ws.onclose = function(event) {
                     clearTimeout(connectionTimeout);
-                    logDebug('❌ WebSocket closed - Code: ' + event.code + ', Reason: ' + event.reason + ', Clean: ' + event.wasClean);
+                    logDebug('WebSocket closed - Code: ' + event.code + ', Reason: ' + event.reason + ', Clean: ' + event.wasClean);
                     connectionMode = 'websocket_closed';
                     if (connectionAttempts < maxRetries) {
                         document.getElementById('status').textContent = 'Disconnected - Retrying... (' + connectionAttempts + '/' + maxRetries + ')';
                         document.getElementById('status').className = 'status disconnected';
                         setTimeout(initWebSocket, 1000);
                     } else {
-                        logDebug('🔄 Max retries reached, forcing HTTP polling fallback');
+                        logDebug('Max retries reached, forcing HTTP polling fallback');
                         startPolling();
                     }
                 };
 
                 ws.onerror = function(error) {
                     clearTimeout(connectionTimeout);
-                    logDebug('❌ WebSocket error: ' + JSON.stringify(error));
+                    logDebug('WebSocket error: ' + JSON.stringify(error));
                     connectionMode = 'websocket_error';
                     document.getElementById('status').textContent = 'WebSocket Error - Retrying...';
                     document.getElementById('status').className = 'status disconnected';
@@ -269,7 +269,7 @@
 
                 ws.onmessage = function(event) {
                     lastMessageTime = Date.now();
-                    logDebug('📨 WebSocket message: ' + event.data);
+                    logDebug('WebSocket message: ' + event.data);
                     try {
                         const data = JSON.parse(event.data);
                         // **FIX:** Update serverLoggingState based on WS message
@@ -281,10 +281,10 @@
                         if (serverLoggingState && data.type === 'reading') {
                            addSensorReading(data.timestamp, data.voltage, data.temperature, data);
                         }
-                    } catch(e) { logDebug('❌ Error parsing message: ' + e.message); }
+                    } catch(e) { logDebug('Error parsing message: ' + e.message); }
                 };
             } catch(e) {
-                logDebug('❌ Error creating WebSocket: ' + e.message);
+                logDebug('Error creating WebSocket: ' + e.message);
                 setTimeout(initWebSocket, 1000);
             }
         }
@@ -297,13 +297,13 @@
 
             pollingActive = true;
             connectionMode = 'polling';
-            logDebug('🔄 Starting HTTP polling mode (2000ms interval)...');
+            logDebug('Starting HTTP polling mode (2000ms interval)...');
 
             document.getElementById('status').textContent = 'Using HTTP Polling (WebSocket failed)';
             document.getElementById('status').className = 'status connected';
 
             pollingInterval = setInterval(function() {
-                logDebug('🔄 Polling /status endpoint...');
+                logDebug('Polling /status endpoint...');
                 fetch('/status')
                     .then(function(response) {
                         if (!response.ok) {
@@ -312,7 +312,7 @@
                         return response.json();
                     })
                     .then(function(data) {
-                        logDebug('✅ Polling success: V=' + data.voltage + 'V, T=' + data.temperature + '°C');
+                        logDebug('Polling success: V=' + data.voltage + 'V, T=' + data.temperature + '°C');
                         // **FIX:** Update serverLoggingState based on polling
                         serverLoggingState = data.loggingEnabled;
                         updateLoggingStatusUI();
@@ -320,11 +320,11 @@
                         if (serverLoggingState && data.voltage !== undefined && data.temperature !== undefined) {
                             addSensorReading(data.timestamp, data.voltage, data.temperature, data);
                         }
-                        document.getElementById('status').textContent = 'HTTP Polling Active (✅ receiving data)';
+                        document.getElementById('status').textContent = 'HTTP Polling Active (receiving data)';
                         document.getElementById('status').className = 'status connected';
                     })
                     .catch(function(error) {
-                        logDebug('❌ Polling error: ' + error.message);
+                        logDebug('Polling error: ' + error.message);
                         document.getElementById('status').textContent = 'Polling Error: ' + error.message;
                         document.getElementById('status').className = 'status disconnected';
                     });
@@ -332,19 +332,19 @@
         }
 
         function testConnection() {
-            logDebug('🔧 Manual connection test initiated...');
+            logDebug('Manual connection test initiated...');
             fetch('/status')
                 .then(response => {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.json();
                 })
                 .then(data => {
-                    logDebug('✅ /status test successful: ' + JSON.stringify(data));
-                    alert('✅ ESP8266 connection OK!\nVoltage: ' + data.voltage + 'V\nTemperature: ' + data.temperature + '°C');
+                    logDebug('/status test successful: ' + JSON.stringify(data));
+                    alert('ESP8266 connection OK!\nVoltage: ' + data.voltage + 'V\nTemperature: ' + data.temperature + '°C');
                 })
                 .catch(error => {
-                    logDebug('❌ /status test failed: ' + error.message);
-                    alert('❌ ESP8266 connection failed: ' + error.message);
+                    logDebug('/status test failed: ' + error.message);
+                    alert('ESP8266 connection failed: ' + error.message);
                 });
         }
 
@@ -527,9 +527,9 @@
                 fetch('/relay/off'),
                 fetch('/pid/disable')
             ]).then(() => {
-                alert('⚠️ EMERGENCY STOP COMPLETE');
+                alert('EMERGENCY STOP COMPLETE');
             }).catch(error => {
-                alert('⚠️ EMERGENCY STOP ERROR: ' + error.message);
+                alert('EMERGENCY STOP ERROR: ' + error.message);
             });
         }
         function setTargetTemp() {
@@ -569,22 +569,22 @@
 
 
         window.onload = function() {
-            updateDetailedDebug('🚀 Page loaded, starting initialization...');
-            updateDetailedDebug('🔍 Testing basic ESP8266 connectivity...');
+            updateDetailedDebug('Page loaded, starting initialization...');
+            updateDetailedDebug('Testing basic ESP8266 connectivity...');
             fetch('/status')
                 .then(response => {
                     if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response.json();
                 })
                 .then(data => {
-                    updateDetailedDebug('✅ Basic connectivity OK! ESP8266 responding.');
-                    updateDetailedDebug('📊 Initial readings: V=' + data.voltage + 'V, T=' + data.temperature + '°C');
+                    updateDetailedDebug('Basic connectivity OK! ESP8266 responding.');
+                    updateDetailedDebug('Initial readings: V=' + data.voltage + 'V, T=' + data.temperature + '°C');
                     serverLoggingState = data.loggingEnabled; // Set initial state
                     updateLoggingStatusUI(); // Update UI based on initial state
                 })
                 .catch(error => {
-                    updateDetailedDebug('❌ Basic connectivity FAILED: ' + error.message);
-                    updateDetailedDebug('⚠️ Check ESP8266 connection and try refreshing the page');
+                    updateDetailedDebug('Basic connectivity FAILED: ' + error.message);
+                    updateDetailedDebug('Check ESP8266 connection and try refreshing the page');
                 });
 
             try { initChart(); } catch(e) { logDebug('Chart initialization failed: ' + e.message); }
@@ -596,7 +596,7 @@
             }, 5000);
             setInterval(updateHeaterRuntime, 1000);
             updateLoggingStatusUI(); // Ensure buttons are correct on load
-            logDebug('✅ Initialization complete');
+            logDebug('Initialization complete');
         };
     </script>
 </body>
