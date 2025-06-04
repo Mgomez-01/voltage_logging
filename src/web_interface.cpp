@@ -3,6 +3,7 @@
 #include "sensor_manager.h"
 #include "heater_controller.h"
 #include "data_manager.h"
+#include "safety_system.h"
 
 // Statistics for debugging
 unsigned long totalWebSocketMessages = 0;
@@ -79,12 +80,12 @@ void sendWebUpdate() {
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
     case WStype_DISCONNECTED:
-      Serial.printf("WebSocket[%u] Disconnected!\\n", num);
+      Serial.printf("WebSocket[%u] Disconnected!\n", num);
       break;
     case WStype_CONNECTED: {
       IPAddress ip = webSocket.remoteIP(num);
-      Serial.printf("WebSocket[%u] Connected from %d.%d.%d.%d\\n", num, ip[0], ip[1], ip[2], ip[3]);
-      Serial.printf("WebSocket: Now %u clients connected\\n", webSocket.connectedClients());
+      Serial.printf("WebSocket[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
+      Serial.printf("WebSocket: Now %u clients connected\n", webSocket.connectedClients());
       JsonDocument doc;
       doc["type"] = "welcome";
       doc["message"] = "Dual sensor WebSocket connected successfully";
@@ -97,10 +98,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       break;
     }
     case WStype_TEXT:
-      Serial.printf("WebSocket[%u] Received text: %s\\n", num, payload);
+      Serial.printf("WebSocket[%u] Received text: %s\n", num, payload);
       break;
     case WStype_ERROR:
-      Serial.printf("WebSocket[%u] Error occurred\\n", num);
+      Serial.printf("WebSocket[%u] Error occurred\n", num);
       break;
     default:
       break;
@@ -108,6 +109,9 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 }
 
 void sendTemplatedPage(const char* filename) {
+    // Feed watchdog at start of potentially long operation
+    feedWatchdog();
+    
     File templateFile = LittleFS.open(filename, "r");
     if (!templateFile) {
         Serial.println("Failed to open template file for reading");
@@ -124,7 +128,7 @@ void sendTemplatedPage(const char* filename) {
 
     String line;
     while (templateFile.available()) {
-        line = templateFile.readStringUntil('\\n');
+        line = templateFile.readStringUntil('\n');
 
         // Perform replacements
         line.replace("{{WIFI_IP}}", WiFi.softAPIP().toString());
@@ -147,10 +151,10 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{JS_HEATER_STATE_INITIAL}}", relayState ? "true" : "false");
         line.replace("{{JS_PID_ENABLED_INITIAL}}", pidEnabled ? "true" : "false");
 
-        server.sendContent(line + "\\n");
+        server.sendContent(line + "\n");
 
-        // Feed watchdog during long operation (using external function)
-        // Note: feedWatchdog() will be called from main loop
+        // Feed watchdog during long operation to prevent emergency shutdown
+        feedWatchdog();
         delay(1);
         yield();
     }
@@ -167,6 +171,10 @@ void handleRoot() {
 
 void handleDataDownload() {
   Serial.println("HTTP: Data download requested");
+  
+  // Feed watchdog before potentially long file operation
+  feedWatchdog();
+  
   if (LittleFS.exists(DATA_FILE)) {
     Serial.println("Flushing buffer before download...");
     flushDataBuffer(); // Use data manager function

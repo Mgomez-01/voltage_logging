@@ -1,4 +1,5 @@
 #include "data_manager.h"
+#include "safety_system.h"
 
 // File system
 const char* DATA_FILE = "/sensor_data.csv";
@@ -14,14 +15,17 @@ int bufferIndex = 0;
 bool bufferFull = false;
 
 void writeBufferToFile() {
+    // Feed watchdog before potentially long write operation
+    feedWatchdog();
+    
     dataFile = LittleFS.open(DATA_FILE, "a");
     if (!dataFile) {
         Serial.println("ERROR: Could not open data file for writing!");
         return; // Exit if file cannot be opened
     }
 
-    // Determine how many readings to write. If buffer is full, write all.
-    // Otherwise, write up to the current index.
+    // // Determine how many readings to write. If buffer is full, write all.
+    // // Otherwise, write up to the current index.
     int readingsToWrite = bufferFull ? BUFFER_SIZE : bufferIndex;
     if (readingsToWrite == 0) {
         dataFile.close();
@@ -34,6 +38,11 @@ void writeBufferToFile() {
     int validTempCount = 0;
 
     for (int i = 0; i < readingsToWrite; i++) {
+        // Feed watchdog every 50 writes during large operations
+        if (i > 0 && i % 50 == 0) {
+            feedWatchdog();
+        }
+        
         dataFile.print(readings[i].timestamp);
         dataFile.print(",");
         dataFile.print(readings[i].voltage, 6);
