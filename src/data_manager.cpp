@@ -7,6 +7,12 @@ File dataFile;
 // Statistics for debugging
 unsigned long totalReadings = 0;
 
+// Buffer constants and variables
+const int BUFFER_SIZE = 100;
+SensorReading readings[BUFFER_SIZE];
+int bufferIndex = 0;
+bool bufferFull = false;
+
 void writeBufferToFile() {
     dataFile = LittleFS.open(DATA_FILE, "a");
     if (!dataFile) {

@@ -49,24 +49,6 @@ bool dataLoggingEnabled = false;  // Start with logging PAUSED
 
 
 
-// Sensor data structure with heater control
-struct SensorReading {
-  unsigned long timestamp;
-  float voltage;
-  float temperature;
-  int currentChannel; // Which channel was being sampled
-  bool heaterState;   // Heater relay state
-  float pidValue;     // PID controller output
-  float targetTemp;   // Target temperature at time of reading
-};
-
-const int BUFFER_SIZE = 100;
-SensorReading readings[BUFFER_SIZE];
-int bufferIndex = 0;
-bool bufferFull = false;
-
-
-
 
 
 

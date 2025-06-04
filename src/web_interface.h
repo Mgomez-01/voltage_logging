@@ -6,6 +6,8 @@
 #include <WebSocketsServer.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include "data_manager.h"  // For SensorReading struct and buffer access
+#include "sensor_manager.h"  // For currentSensorChannel
 
 // External objects
 extern ESP8266WebServer server;
@@ -17,14 +19,6 @@ extern unsigned long connectedClients;
 extern bool dataLoggingEnabled;
 extern unsigned long lastSample;
 extern unsigned long lastWebUpdate;
-extern int currentSensorChannel;
-
-// External buffer references
-extern const int BUFFER_SIZE;
-extern struct SensorReading readings[];
-extern int bufferIndex;
-extern bool bufferFull;
-extern unsigned long totalReadings;
 
 // Function declarations
 void setupWebServer();

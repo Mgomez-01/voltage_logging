@@ -1,4 +1,5 @@
 #include "heater_controller.h"
+#include "safety_system.h"
 
 // Heater control pins and configuration
 const int RELAY_PIN = 16; // GPIO16 (D0) for relay control

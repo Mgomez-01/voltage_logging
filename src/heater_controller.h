@@ -2,6 +2,7 @@
 #define HEATER_CONTROLLER_H
 
 #include <Arduino.h>
+#include "data_manager.h"  // For SensorReading struct and buffer access
 
 // Heater control pins and configuration
 extern const int RELAY_PIN; // GPIO16 (D0) for relay control
@@ -23,13 +24,6 @@ extern float pidLastError;
 extern float pidIntegral;
 extern const unsigned long PID_INTERVAL; // PID update interval in ms
 extern unsigned long lastPIDUpdate;
-
-// External references needed by heater controller
-extern int bufferIndex;
-extern bool bufferFull;
-extern const int BUFFER_SIZE;
-extern struct SensorReading readings[];
-extern volatile bool emergencyShutdown;
 
 // Function declarations
 void initializeRelay();

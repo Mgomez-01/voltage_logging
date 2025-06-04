@@ -1,5 +1,4 @@
 #include "safety_system.h"
-#include "web_interface.h"
 
 // Hardware-based Safety System
 Ticker safetyTimer;           // Hardware timer for safety checks
