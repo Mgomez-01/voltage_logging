@@ -13,9 +13,9 @@ const float MAX_SAFE_TEMPERATURE = 120.0; // Maximum safe temperature in °C
 // PID Controller variables
 float targetTemperature = 65.0; // Default target temperature
 bool pidEnabled = false;
-float pidKp = 1.0;  // Proportional gain
-float pidKi = 0.0;  // Integral gain
-float pidKd = 0.0;  // Derivative gain
+float pidKp = 2.2;  // Proportional gain
+float pidKi = 0.25;  // Integral gain
+float pidKd = 0.15;  // Derivative gain - these values have been tested and work well at 50°C. 
 float pidOutput = 0.0;
 float pidError = 0.0;
 float pidLastError = 0.0;
