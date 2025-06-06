@@ -34,7 +34,7 @@ void initializeSafetySystem() {
   // We will manage our own watchdog, but keep ESP WDT as a final backup
   ESP.wdtEnable(WATCHDOG_TIMEOUT);
   safetyTimer.attach_ms(SAFETY_CHECK_INTERVAL, hardwareSafetyCheck);
-  watchdogTimer.attach_ms(3000, watchdogCheck); // Check every 3 seconds (more reasonable for file operations)
+  watchdogTimer.attach_ms(8000, watchdogCheck); // Check every 8 seconds (allows time for file operations)
   systemAlive = true;
   emergencyShutdown = false;
   lastSafetyCheck = millis();

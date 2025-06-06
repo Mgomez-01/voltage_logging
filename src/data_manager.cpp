@@ -17,12 +17,16 @@ bool bufferFull = false;
 void writeBufferToFile() {
     // Feed watchdog before potentially long write operation
     feedWatchdog();
+    Serial.println("[WATCHDOG] Fed before file write operation");
     
     dataFile = LittleFS.open(DATA_FILE, "a");
     if (!dataFile) {
         Serial.println("ERROR: Could not open data file for writing!");
         return; // Exit if file cannot be opened
     }
+    
+    // Feed watchdog after successfully opening file
+    feedWatchdog();
 
     // // Determine how many readings to write. If buffer is full, write all.
     // // Otherwise, write up to the current index.
@@ -38,8 +42,8 @@ void writeBufferToFile() {
     int validTempCount = 0;
 
     for (int i = 0; i < readingsToWrite; i++) {
-        // Feed watchdog every 50 writes during large operations
-        if (i > 0 && i % 50 == 0) {
+        // Feed watchdog every 10 writes during large operations
+        if (i > 0 && i % 10 == 0) {
             feedWatchdog();
         }
         
@@ -70,7 +74,11 @@ void writeBufferToFile() {
         }
         batchCount++;
     }
+    
+    // Feed watchdog before closing file
+    feedWatchdog();
     dataFile.close();
+    Serial.println("[WATCHDOG] Fed after file write completion");
 
     Serial.print("Wrote ");
     Serial.print(batchCount);
