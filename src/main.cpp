@@ -119,16 +119,16 @@ void setup() {
   Serial.print("Open browser to: http://");
   Serial.println(WiFi.softAPIP());
   Serial.println("===============================================");
-  Serial.println("⚠️  DATA LOGGING IS PAUSED BY DEFAULT");
+  Serial.println("DATA LOGGING IS PAUSED BY DEFAULT");
   Serial.println("   Click 'Start Logging' in web interface to begin");
   Serial.println("   Voltage Channel 0, Temperature Channel 1");
-  Serial.println("🔥 HEATER CONTROL READY");
+  Serial.println("  HEATER CONTROL READY");
   Serial.println("   Relay on GPIO16 (D0)");
   Serial.println("   PID control available");
   Serial.println("   Safety timeout: 10 minutes");
-  Serial.println("   ⚡ HARDWARE SAFETY SYSTEM ACTIVE");
-  Serial.println("   ⚡ Independent timer-based monitoring");
-  Serial.println("   ⚡ Watchdog protection enabled");
+  Serial.println("     HARDWARE SAFETY SYSTEM ACTIVE");
+  Serial.println("     Independent timer-based monitoring");
+  Serial.println("     Watchdog protection enabled");
   Serial.println("===============================================");
   Serial.println();
 }
@@ -213,19 +213,6 @@ void readSensors() {
   }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 void checkSafetyTimeout() {
   if (millis() - lastSafetyCheck > SAFETY_CHECK_INTERVAL * 3 && !emergencyShutdown) {
     Serial.println("WARNING: Hardware safety system not responding!");
@@ -234,11 +221,6 @@ void checkSafetyTimeout() {
   // Call heater controller's safety check function
   checkHeaterSafety();
 }
-
-
-
-
-
 
 // ... (Keep printDebugStats) ...
 void printDebugStats() {
