@@ -134,6 +134,21 @@
             <button onclick="clearData()" class="btn danger">Clear Data</button>
             </div>
 
+        <div id="logFilesContainer" class="control-panel">
+            <h3>Log Files on SD Card</h3>
+            <button onclick="listLogFiles()" class="btn">Refresh List</button>
+            <table id="logFilesTable">
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+
         <div class="chart-container"><canvas id="sensorChart"></canvas></div>
         <div class="log-container" id="logContainer"><div>Sensor readings will appear here...</div></div>
     </div>
@@ -423,6 +438,7 @@
                     document.getElementById('currentTemperature').textContent = '--';
                     document.getElementById('logContainer').innerHTML = '<div>Data cleared. New sensor readings will appear here...</div>';
                     alert('Sensor data cleared successfully');
+                    listLogFiles();
                 }).catch(function() { alert('Error clearing data'); });
             }
         }
@@ -567,6 +583,24 @@
             }).catch(error => alert('Error: ' + error.message));
         }
 
+        function listLogFiles() {
+            fetch('/logs')
+                .then(response => response.json())
+                .then(files => {
+                    const tableBody = document.getElementById('logFilesTable').getElementsByTagName('tbody')[0];
+                    tableBody.innerHTML = '';
+                    files.forEach(file => {
+                        const row = tableBody.insertRow();
+                        const cell1 = row.insertCell(0);
+                        const cell2 = row.insertCell(1);
+                        cell1.innerHTML = file;
+                        cell2.innerHTML = '<a href="/data.csv?file=' + file + '" class="btn">Download</a>';
+                    });
+                })
+                .catch(error => {
+                    console.error('Error fetching log files:', error);
+                });
+        }
 
         window.onload = function() {
             updateDetailedDebug('Page loaded, starting initialization...');
@@ -596,6 +630,7 @@
             }, 5000);
             setInterval(updateHeaterRuntime, 1000);
             updateLoggingStatusUI(); // Ensure buttons are correct on load
+            listLogFiles();
             logDebug('Initialization complete');
         };
     </script>
