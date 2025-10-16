@@ -30,6 +30,9 @@ void setupWebServer() {
   server.on("/pid/params", handlePIDParams);
   server.on("/heater/status", handleHeaterStatus);
 
+  // SD card routes
+  server.on("/logs", handleListLogs);
+
   Serial.println("OK");
   server.begin();
   Serial.println("Web server listening on port 80");
@@ -171,29 +174,28 @@ void handleRoot() {
 
 void handleDataDownload() {
   Serial.println("HTTP: Data download requested");
-  
-  // Feed watchdog before potentially long file operation
-  feedWatchdog();
-  
-  if (LittleFS.exists(DATA_FILE)) {
-    Serial.println("Flushing buffer before download...");
-    flushDataBuffer(); // Use data manager function
-    File file = LittleFS.open(DATA_FILE, "r");
-    if (file) {
-        if (file.size() <= 80) { // Check if only header (or very small)
-            Serial.println("WARNING: Data file seems empty or contains only headers.");
-        }
-        server.sendHeader("Content-Disposition", "attachment; filename=sensor_data.csv");
+  if (server.hasArg("file")) {
+    String filename = server.arg("file");
+    Serial.print("Downloading file: ");
+    Serial.println(filename);
+
+    if (SD.exists(filename)) {
+      File file = SD.open(filename, "r");
+      if (file) {
+        server.sendHeader("Content-Disposition", "attachment; filename=" + filename);
         server.streamFile(file, "text/csv");
         file.close();
-        Serial.println("HTTP: Dual sensor data file sent successfully");
+        Serial.println("HTTP: Log file sent successfully");
+      } else {
+        server.send(404, "text/plain", "File not found");
+        Serial.println("HTTP: ERROR - Could not open log file");
+      }
     } else {
-      server.send(404, "text/plain", "File not found");
-      Serial.println("HTTP: ERROR - Could not open data file");
+      server.send(404, "text/plain", "No data file exists");
+      Serial.println("HTTP: ERROR - Log file does not exist");
     }
   } else {
-    server.send(404, "text/plain", "No data file exists");
-    Serial.println("HTTP: ERROR - Data file does not exist");
+    server.send(400, "text/plain", "Missing file parameter");
   }
 }
 
@@ -343,4 +345,29 @@ void handleHeaterStatus() {
   String jsonString;
   serializeJson(doc, jsonString);
   server.send(200, "application/json", jsonString);
+}
+
+void handleListLogs() {
+  Serial.println("HTTP: List logs requested");
+  if (initializeSDCard()) {
+    File root = SD.open("/");
+    JsonDocument doc;
+    JsonArray logs = doc.to<JsonArray>();
+    while (true) {
+      File entry =  root.openNextFile();
+      if (! entry) {
+        break;
+      }
+      if (strstr(entry.name(), "data") != NULL && strstr(entry.name(), ".log") != NULL) {
+        logs.add(entry.name());
+      }
+      entry.close();
+    }
+    root.close();
+    String jsonString;
+    serializeJson(doc, jsonString);
+    server.send(200, "application/json", jsonString);
+  } else {
+    server.send(500, "text/plain", "SD card not found");
+  }
 }
