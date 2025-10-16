@@ -4,6 +4,7 @@
 // File system
 const char* DATA_FILE = "/sensor_data.csv";
 File dataFile;
+char logFileName[20];
 
 // Statistics for debugging
 unsigned long totalReadings = 0;
@@ -14,12 +15,31 @@ SensorReading readings[BUFFER_SIZE];
 int bufferIndex = 0;
 bool bufferFull = false;
 
+bool initializeSDCard() {
+  if (!SD.begin(SS)) {
+    Serial.println("ERROR: SD card initialization failed!");
+    return false;
+  }
+  Serial.println("SD card initialized.");
+  return true;
+}
+
+void getNewLogFileName() {
+  strcpy(logFileName, "data.log");
+  if (SD.exists(logFileName)) {
+    int n = 1;
+    do {
+      sprintf(logFileName, "data_%d.log", n++);
+    } while (SD.exists(logFileName));
+  }
+}
+
 void writeBufferToFile() {
     // Feed watchdog before potentially long write operation
     feedWatchdog();
     Serial.println("[WATCHDOG] Fed before file write operation");
     
-    dataFile = LittleFS.open(DATA_FILE, "a");
+    dataFile = SD.open(logFileName, FILE_WRITE);
     if (!dataFile) {
         Serial.println("ERROR: Could not open data file for writing!");
         return; // Exit if file cannot be opened
@@ -101,31 +121,37 @@ void writeBufferToFile() {
 }
 
 void initializeDataFile() {
-  if (!LittleFS.exists(DATA_FILE)) {
-    dataFile = LittleFS.open(DATA_FILE, "w");
+  if (initializeSDCard()) {
+    getNewLogFileName();
+    dataFile = SD.open(logFileName, FILE_WRITE);
     if (dataFile) {
       dataFile.println("timestamp,voltage,temperature,heater_state,target_temp,pid_output");
       dataFile.close();
-      Serial.println("Created new data file with heater control header");
+      Serial.print("Created new data file: ");
+      Serial.println(logFileName);
     } else {
       Serial.println("ERROR: Could not create data file!");
     }
-  } else {
-    Serial.println("Data file exists, will append new data with heater control");
   }
 }
 
 void clearDataFile() {
-  if (LittleFS.exists(DATA_FILE)) {
-    File file = LittleFS.open(DATA_FILE, "r");
-    if (file) {
-      Serial.print("File size before clear: ");
-      Serial.print(file.size());
-      Serial.println(" bytes");
-      file.close();
+  if (initializeSDCard()) {
+    File root = SD.open("/");
+    while (true) {
+      File entry =  root.openNextFile();
+      if (! entry) {
+        break;
+      }
+      if (strstr(entry.name(), "data") != NULL && strstr(entry.name(), ".log") != NULL) {
+        SD.remove(entry.name());
+        Serial.print("Removed: ");
+        Serial.println(entry.name());
+      }
+      entry.close();
     }
+    root.close();
   }
-  LittleFS.remove(DATA_FILE);
   initializeDataFile();
   bufferIndex = 0;
   bufferFull = false;

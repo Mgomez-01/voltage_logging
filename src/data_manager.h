@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <LittleFS.h>
+#include <SD.h>
 
 // Sensor data structure with heater control
 struct SensorReading {
@@ -18,6 +19,7 @@ struct SensorReading {
 // File system
 extern const char* DATA_FILE;
 extern File dataFile;
+extern char logFileName[20];
 
 // Statistics for debugging
 extern unsigned long totalReadings;
@@ -33,5 +35,7 @@ void writeBufferToFile();
 void initializeDataFile();
 void clearDataFile();
 void flushDataBuffer();
+bool initializeSDCard();
+void getNewLogFileName();
 
 #endif // DATA_MANAGER_H
