@@ -32,6 +32,7 @@ void setupWebServer() {
 
   // SD card routes
   server.on("/logs", handleListLogs);
+  server.on("/logs/delete", handleDeleteLog);
 
   Serial.println("OK");
   server.begin();
@@ -174,6 +175,10 @@ void handleRoot() {
 
 void handleDataDownload() {
   Serial.println("HTTP: Data download requested");
+  if (!initializeSDCard()) {
+    server.send(500, "text/plain", "SD card not found");
+    return;
+  }
   if (server.hasArg("file")) {
     String filename = server.arg("file");
     Serial.print("Downloading file: ");
@@ -201,6 +206,10 @@ void handleDataDownload() {
 
 void handleClearData() {
   Serial.println("HTTP: Clear data requested");
+  if (!initializeSDCard()) {
+    server.send(500, "text/plain", "SD card not found");
+    return;
+  }
   clearDataFile();
   server.send(200, "text/plain", "Data cleared");
   Serial.println("HTTP: Data cleared successfully");
@@ -359,7 +368,9 @@ void handleListLogs() {
         break;
       }
       if (strstr(entry.name(), "data") != NULL && strstr(entry.name(), ".log") != NULL) {
-        logs.add(entry.name());
+        JsonObject log = logs.add<JsonObject>();
+        log["name"] = entry.name();
+        log["size"] = entry.size();
       }
       entry.close();
     }
@@ -369,5 +380,22 @@ void handleListLogs() {
     server.send(200, "application/json", jsonString);
   } else {
     server.send(500, "text/plain", "SD card not found");
+  }
+}
+
+void handleDeleteLog() {
+  if (!initializeSDCard()) {
+    server.send(500, "text/plain", "SD card not found");
+    return;
+  }
+  if (server.hasArg("file")) {
+    String filename = server.arg("file");
+    if (SD.remove(filename)) {
+      server.send(200, "text/plain", "File deleted");
+    } else {
+      server.send(500, "text/plain", "Error deleting file");
+    }
+  } else {
+    server.send(400, "text/plain", "Missing file parameter");
   }
 }
