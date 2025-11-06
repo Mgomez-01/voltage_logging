@@ -31,7 +31,6 @@
         .stat-label { font-size: 12px; color: #666; }
         .debug { background-color: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 4px; font-family: monospace; font-size: 12px; }
         .control-panel { background-color: #f8f9fa; border: 2px solid #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .control-panel h3 { margin-top: 0; color: #495057; }
         .heater-status { display: inline-block; width: 20px; height: 20px; border-radius: 50%; margin-left: 10px; vertical-align: middle; }
         .heater-on { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }
         .heater-off { background-color: #666666; }
@@ -39,6 +38,10 @@
         .pid-params input { width: 60px; margin: 0 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
         .temp-input { width: 80px; padding: 5px; margin: 0 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
         .debug-enhanced { background-color: #e3f2fd; border: 2px solid #2196f3; padding: 15px; margin: 10px 0; border-radius: 8px; font-family: monospace; font-size: 11px; max-height: 150px; overflow-y: auto; }
+        #logFilesContainer { margin-top: 20px; }
+        #logFilesTable { width: 100%; border-collapse: collapse; }
+        #logFilesTable th, #logFilesTable td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        #logFilesTable th { background-color: #f2f2f2; }
     </style>
 </head>
 <body>
@@ -137,10 +140,12 @@
         <div id="logFilesContainer" class="control-panel">
             <h3>Log Files on SD Card</h3>
             <button onclick="listLogFiles()" class="btn">Refresh List</button>
+            <div id="sdCardError" style="color: red; margin-top: 10px;"></div>
             <table id="logFilesTable">
                 <thead>
                     <tr>
                         <th>File Name</th>
+                        <th>Size</th>
                         <th>Action</th>
                     </tr>
                 </thead>
@@ -584,8 +589,14 @@
         }
 
         function listLogFiles() {
+            document.getElementById('sdCardError').innerText = '';
             fetch('/logs')
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        return response.text().then(text => { throw new Error(text) });
+                    }
+                    return response.json();
+                })
                 .then(files => {
                     const tableBody = document.getElementById('logFilesTable').getElementsByTagName('tbody')[0];
                     tableBody.innerHTML = '';
@@ -593,13 +604,36 @@
                         const row = tableBody.insertRow();
                         const cell1 = row.insertCell(0);
                         const cell2 = row.insertCell(1);
-                        cell1.innerHTML = file;
-                        cell2.innerHTML = '<a href="/data.csv?file=' + file + '" class="btn">Download</a>';
+                        const cell3 = row.insertCell(2);
+                        cell1.innerHTML = file.name;
+                        cell2.innerHTML = (file.size / 1024).toFixed(2) + ' KB';
+                        cell3.innerHTML = '<a href="/data.csv?file=' + file.name + '" class="btn">Download</a>' +
+                                          '<button onclick="deleteLogFile(\'' + file.name + '\')" class="btn danger">Delete</button>';
                     });
                 })
                 .catch(error => {
                     console.error('Error fetching log files:', error);
+                    document.getElementById('sdCardError').innerText = 'Error: ' + error.message;
                 });
+        }
+
+        function deleteLogFile(filename) {
+            if (confirm('Are you sure you want to delete ' + filename + '?')) {
+                fetch('/logs/delete?file=' + filename)
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.text().then(text => { throw new Error(text) });
+                        }
+                        return response.text();
+                    })
+                    .then(data => {
+                        alert(data);
+                        listLogFiles();
+                    })
+                    .catch(error => {
+                        alert('Error: ' + error.message);
+                    });
+            }
         }
 
         window.onload = function() {
