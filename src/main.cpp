@@ -71,8 +71,8 @@ void setup() {
     // Setup multiplexer control pins
   setupMultiplexer();
 
-  // Setup heater relay control
-  initializeRelay();
+  // Setup heater PWM control
+  initializeHeaterPWM();
 
   // Debug: Show what A0 maps to and test both channels
   Serial.print("A0 pin number: ");
@@ -122,10 +122,11 @@ void setup() {
   Serial.println("DATA LOGGING IS PAUSED BY DEFAULT");
   Serial.println("   Click 'Start Logging' in web interface to begin");
   Serial.println("   Voltage Channel 0, Temperature Channel 1");
-  Serial.println("  HEATER CONTROL READY");
-  Serial.println("   Relay on GPIO16 (D0)");
-  Serial.println("   PID control available");
-  Serial.println("   Safety timeout: 10 minutes");
+  Serial.println("  PWM HEATER CONTROL READY");
+  Serial.println("   PWM pin: GPIO16 (D0) - 10 Hz frequency");
+  Serial.println("   MOSFET: AOD4144 N-channel");
+  Serial.println("   PID control with smooth 0-100% power regulation");
+  Serial.println("   Safety timeout: 10 minutes continuous operation");
   Serial.println("     HARDWARE SAFETY SYSTEM ACTIVE");
   Serial.println("     Independent timer-based monitoring");
   Serial.println("     Watchdog protection enabled");
@@ -184,8 +185,8 @@ void readSensors() {
     readings[bufferIndex].voltage = lastVoltage;
     readings[bufferIndex].temperature = lastTemperature;
     readings[bufferIndex].currentChannel = THERMISTOR_CHANNEL;
-    readings[bufferIndex].heaterState = relayState;
-    readings[bufferIndex].pidValue = pidOutput;
+    readings[bufferIndex].heaterState = (heaterDutyCycle > 0);  // Store as boolean: is heater active?
+    readings[bufferIndex].pidValue = heaterDutyCycle;  // Store actual PWM duty cycle percentage
     readings[bufferIndex].targetTemp = targetTemperature;
     totalReadings++;
     #if DEBUG_ADC
@@ -237,8 +238,14 @@ void printDebugStats() {
     Serial.print("Current buffer index: "); Serial.print(bufferIndex); Serial.print("/"); Serial.print(BUFFER_SIZE); Serial.print(" ("); Serial.print((bufferIndex * 100) / BUFFER_SIZE); Serial.println("% full)");
     Serial.print("WebSocket messages sent: "); Serial.println(totalWebSocketMessages);
     Serial.println("HEATER CONTROL STATUS:");
-    Serial.print("  Heater: "); Serial.print(heaterEnabled ? "ENABLED" : "DISABLED"); Serial.print(", Relay: "); Serial.print(relayState ? "ON" : "OFF");
-    if (relayState) { Serial.print(" (Runtime: "); Serial.print((millis() - relayOnTime) / 1000); Serial.print("s)"); } Serial.println();
+    Serial.print("  Heater: "); Serial.print(heaterEnabled ? "ENABLED" : "DISABLED"); 
+    Serial.print(", PWM: "); Serial.print(heaterDutyCycle, 1); Serial.print("%");
+    if (heaterDutyCycle > 0) { 
+      Serial.print(" (Active for: "); 
+      Serial.print((millis() - heaterStartTime) / 1000); 
+      Serial.print("s)"); 
+    } 
+    Serial.println();
     Serial.print("  PID Control: "); Serial.print(pidEnabled ? "ACTIVE" : "INACTIVE");
     if (pidEnabled) { Serial.print(" (Target: "); Serial.print(targetTemperature); Serial.print("°C, Output: "); Serial.print(pidOutput, 1); Serial.print("%, Error: "); Serial.print(pidError, 2); Serial.print("°C)"); } Serial.println();
     Serial.print("  PID Parameters: Kp="); Serial.print(pidKp); Serial.print(", Ki="); Serial.print(pidKi); Serial.print(", Kd="); Serial.println(pidKd);

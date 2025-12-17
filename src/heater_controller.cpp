@@ -3,12 +3,18 @@
 #include "sensor_manager.h"  // For direct sensor access
 
 // Heater control pins and configuration
-const int RELAY_PIN = 16; // GPIO16 (D0) for relay control
+const int HEATER_PWM_PIN = 16; // GPIO16 (D0) for PWM control of MOSFET
 bool heaterEnabled = false;
-bool relayState = false;
-unsigned long relayOnTime = 0;
+float heaterDutyCycle = 0.0; // Current PWM duty cycle (0-100%)
+unsigned long heaterStartTime = 0; // Time when heater was enabled
 const unsigned long MAX_HEATER_TIME = 600000; // 10 min safety timeout
 const float MAX_SAFE_TEMPERATURE = 120.0; // Maximum safe temperature in °C
+
+// PWM configuration
+// Lower frequency (5-10 Hz) is better for heater control to reduce MOSFET switching losses
+// and provide more accurate average power delivery
+const int PWM_FREQUENCY = 10; // 10 Hz PWM frequency
+const int PWM_RANGE = 1000;   // 0-1000 range for 0.1% resolution
 
 // PID Controller variables
 float targetTemperature = 65.0; // Default target temperature
@@ -27,34 +33,65 @@ unsigned long lastPIDUpdate = 0;
 #define DEBUG_HEATER 1
 #define DEBUG_PID 1
 
-void initializeRelay() {
-  Serial.print("Initializing heater relay control... ");
-  pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, LOW);
-  relayState = false;
+void initializeHeaterPWM() {
+  Serial.print("Initializing heater PWM control... ");
+  
+  // Configure PWM frequency and range
+  analogWriteFreq(PWM_FREQUENCY);
+  analogWriteRange(PWM_RANGE);
+  
+  // Set pin as output and initialize to 0% duty cycle
+  pinMode(HEATER_PWM_PIN, OUTPUT);
+  analogWrite(HEATER_PWM_PIN, 0);
+  heaterDutyCycle = 0.0;
+  
   Serial.println("OK");
-  Serial.print("Relay pin: GPIO");
-  Serial.print(RELAY_PIN);
-  Serial.println(" (D0)");
+  Serial.print("PWM pin: GPIO");
+  Serial.print(HEATER_PWM_PIN);
+  Serial.print(" (D0), Frequency: ");
+  Serial.print(PWM_FREQUENCY);
+  Serial.print(" Hz, Range: 0-");
+  Serial.println(PWM_RANGE);
+  Serial.println("PWM control via MOSFET (AOD4144) for smooth heater power regulation");
 }
 
-void setRelayState(bool state) {
-  if (state != relayState) {
-    relayState = state;
-    digitalWrite(RELAY_PIN, state ? HIGH : LOW);
-    if (state) {
-      relayOnTime = millis();
-      #if DEBUG_HEATER
-      Serial.println("HEATER: Relay turned ON");
-      #endif
-    } else {
-      #if DEBUG_HEATER
-      Serial.print("HEATER: Relay turned OFF (was on for ");
-      Serial.print((millis() - relayOnTime) / 1000);
-      Serial.println(" seconds)");
-      #endif
-    }
+void setHeaterPower(float dutyCyclePercent) {
+  // Clamp duty cycle to 0-100%
+  if (dutyCyclePercent < 0) dutyCyclePercent = 0;
+  if (dutyCyclePercent > 100) dutyCyclePercent = 100;
+  
+  // Convert percentage to PWM value (0-1000)
+  int pwmValue = (int)((dutyCyclePercent / 100.0) * PWM_RANGE);
+  
+  // Update PWM output
+  analogWrite(HEATER_PWM_PIN, pwmValue);
+  
+  // Track state changes for logging
+  bool wasActive = (heaterDutyCycle > 0);
+  bool nowActive = (dutyCyclePercent > 0);
+  
+  heaterDutyCycle = dutyCyclePercent;
+  
+  #if DEBUG_HEATER
+  // Log significant changes
+  if (!wasActive && nowActive) {
+    Serial.print("HEATER: PWM enabled at ");
+    Serial.print(dutyCyclePercent, 1);
+    Serial.print("% (PWM value: ");
+    Serial.print(pwmValue);
+    Serial.println(")");
+    heaterStartTime = millis();
+  } else if (wasActive && !nowActive) {
+    Serial.print("HEATER: PWM disabled (was active for ");
+    Serial.print((millis() - heaterStartTime) / 1000);
+    Serial.println(" seconds)");
+  } else if (abs(heaterDutyCycle - dutyCyclePercent) > 5.0) {
+    // Log if duty cycle changes by more than 5%
+    Serial.print("HEATER: Power adjusted to ");
+    Serial.print(dutyCyclePercent, 1);
+    Serial.println("%");
   }
+  #endif
 }
 
 void checkHeaterSafety() {
@@ -63,22 +100,35 @@ void checkHeaterSafety() {
   if (!emergencyShutdown && (bufferIndex > 0 || bufferFull)) {
     int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
     float currentTemp = readings[idx].temperature;
+    
+    // Check for over-temperature
     if (currentTemp > MAX_SAFE_TEMPERATURE) {
       Serial.print("SAFETY: Over-temperature shutdown! Temp=");
       Serial.print(currentTemp);
       Serial.println("°C");
       emergencyShutdown = true;
     }
-    if (relayState && (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200)) {
+    
+    // Check for sensor failure (only if heater is active)
+    if (heaterDutyCycle > 0 && (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200)) {
       Serial.println("SAFETY: Temperature sensor failure - emergency shutdown");
       emergencyShutdown = true;
     }
+    
+    // Check for maximum runtime (10 minutes continuous heating)
+    if (heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
+      Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
+      emergencyShutdown = true;
+    }
   }
+  
+  // Execute emergency shutdown if triggered
   if (emergencyShutdown) {
-    digitalWrite(RELAY_PIN, LOW);
-    relayState = false;
+    analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
+    heaterDutyCycle = 0.0;
     heaterEnabled = false;
     pidEnabled = false;
+    Serial.println("SAFETY: All heater control disabled");
   }
 }
 
@@ -138,39 +188,48 @@ void updatePIDController() {
   #endif
   
   pidError = targetTemperature - currentTemp;
+  
+  // Calculate PID terms
   float proportional = pidKp * pidError;
+  
+  // Update integral with anti-windup
   pidIntegral += pidError * (PID_INTERVAL / 1000.0);
+  // Anti-windup: limit integral to prevent excessive buildup
   if (pidIntegral > 100) pidIntegral = 100;
   if (pidIntegral < -100) pidIntegral = -100;
   float integral = pidKi * pidIntegral;
+  
+  // Calculate derivative
   float derivative = pidKd * (pidError - pidLastError) / (PID_INTERVAL / 1000.0);
   pidLastError = pidError;
+  
+  // Compute PID output (0-100%)
   pidOutput = proportional + integral + derivative;
+  
+  // Clamp output to 0-100%
   if (pidOutput > 100) pidOutput = 100;
   if (pidOutput < 0) pidOutput = 0;
-  // Use hysteresis to prevent rapid on/off cycling
-  static float onThreshold = 4.0;   // Turn on at 12%
-  static float offThreshold = 4.0;   // Turn off at 8%
   
-  if (!relayState && pidOutput > onThreshold) {
-    setRelayState(true);   // Turn on when output rises above 12%
-    #if DEBUG_PID
-    Serial.print("PID: Turning heater ON (output ");
-    Serial.print(pidOutput);
-    Serial.print("% > ");
-    Serial.print(onThreshold);
-    Serial.println("%)");
-    #endif
-  } else if (relayState && pidOutput < offThreshold) {
-    setRelayState(false);  // Turn off when output drops below 8%
-    #if DEBUG_PID
-    Serial.print("PID: Turning heater OFF (output ");
-    Serial.print(pidOutput);
-    Serial.print("% < ");
-    Serial.print(offThreshold);
-    Serial.println("%)");
-    #endif
+  // Apply PID output directly to heater PWM
+  // No hysteresis needed with PWM - smooth continuous control
+  setHeaterPower(pidOutput);
+  
+  #if DEBUG_PID
+  // Detailed PID debug output every 10 updates
+  static int debugCounter = 0;
+  if (++debugCounter >= 10) {
+    debugCounter = 0;
+    Serial.print("PID DETAIL: P=");
+    Serial.print(proportional, 2);
+    Serial.print(", I=");
+    Serial.print(integral, 2);
+    Serial.print(", D=");
+    Serial.print(derivative, 2);
+    Serial.print(", Sum=");
+    Serial.print(pidOutput, 2);
+    Serial.println("%");
   }
+  #endif
   #if DEBUG_PID
   Serial.print("PID: Target=");
   Serial.print(targetTemperature);
@@ -179,10 +238,10 @@ void updatePIDController() {
   Serial.print("°C, Error=");
   Serial.print(pidError);
   Serial.print(", Output=");
-  Serial.print(pidOutput);
-  Serial.print("%, Relay=");
-  Serial.print(relayState ? "ON" : "OFF");
-  Serial.print(", BufIdx=");
+  Serial.print(pidOutput, 1);
+  Serial.print("%, PWM=");
+  Serial.print(heaterDutyCycle, 1);
+  Serial.print("%, BufIdx=");
   Serial.print(bufferIndex);
   Serial.print(", ReadIdx=");
   Serial.println(idx);

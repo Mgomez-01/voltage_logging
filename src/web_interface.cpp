@@ -142,8 +142,9 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
         line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection");
-        line.replace("{{RELAY_STATUS_TEXT_INITIAL}}", relayState ? "ON" : "OFF");
-        line.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", relayState ? "heater-on" : "heater-off");
+        line.replace("{{RELAY_STATUS_TEXT_INITIAL}}", heaterDutyCycle > 0 ? "ON" : "OFF");
+        line.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", heaterDutyCycle > 0 ? "heater-on" : "heater-off");
+        line.replace("{{PWM_DUTY_CYCLE_INITIAL}}", String(heaterDutyCycle, 1));
         line.replace("{{TARGET_TEMP_INITIAL}}", String(targetTemperature, 1));
         line.replace("{{MAX_SAFE_TEMP_VALUE}}", String(MAX_SAFE_TEMPERATURE));
         line.replace("{{MAX_SAFE_TEMP_VALUE_JS}}", String(MAX_SAFE_TEMPERATURE));
@@ -152,7 +153,8 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{PID_KP_INITIAL}}", String(pidKp, 2));
         line.replace("{{PID_KI_INITIAL}}", String(pidKi, 2));
         line.replace("{{PID_KD_INITIAL}}", String(pidKd, 2));
-        line.replace("{{JS_HEATER_STATE_INITIAL}}", relayState ? "true" : "false");
+        line.replace("{{JS_HEATER_STATE_INITIAL}}", heaterDutyCycle > 0 ? "true" : "false");
+        line.replace("{{JS_PWM_DUTY_CYCLE_INITIAL}}", String(heaterDutyCycle, 1));
         line.replace("{{JS_PID_ENABLED_INITIAL}}", pidEnabled ? "true" : "false");
 
         server.sendContent(line + "\n");
@@ -236,7 +238,8 @@ void handleStatus() {
   doc["connectedClients"] = webSocket.connectedClients();
   doc["uptime"] = millis() / 1000;
   doc["loggingEnabled"] = dataLoggingEnabled;
-  doc["heaterState"] = relayState;
+  doc["heaterState"] = (heaterDutyCycle > 0);
+  doc["heaterDutyCycle"] = heaterDutyCycle;
   doc["targetTemp"] = targetTemperature;
   doc["pidEnabled"] = pidEnabled;
   doc["pidOutput"] = pidOutput;
@@ -273,18 +276,19 @@ void handleStopLogging() {
 }
 
 void handleRelayOn() {
-  Serial.println("HTTP: Relay ON requested");
+  Serial.println("HTTP: Heater ON requested (manual 100% PWM)");
   heaterEnabled = true;
-  setRelayState(true);
-  server.send(200, "text/plain", "Relay turned ON");
+  pidEnabled = false;  // Disable PID for manual control
+  setHeaterPower(100.0);  // Set to 100% PWM
+  server.send(200, "text/plain", "Heater turned ON at 100%");
 }
 
 void handleRelayOff() {
-  Serial.println("HTTP: Relay OFF requested");
+  Serial.println("HTTP: Heater OFF requested");
   heaterEnabled = false;
   pidEnabled = false;
-  setRelayState(false);
-  server.send(200, "text/plain", "Relay turned OFF");
+  setHeaterPower(0.0);  // Set to 0% PWM
+  server.send(200, "text/plain", "Heater turned OFF");
 }
 
 void handleSetTemperature() {
@@ -342,7 +346,8 @@ void handlePIDParams() {
 void handleHeaterStatus() {
   JsonDocument doc;
   doc["heaterEnabled"] = heaterEnabled;
-  doc["relayState"] = relayState;
+  doc["heaterDutyCycle"] = heaterDutyCycle;
+  doc["heaterState"] = (heaterDutyCycle > 0);
   doc["targetTemp"] = targetTemperature;
   doc["pidEnabled"] = pidEnabled;
   doc["pidOutput"] = pidOutput;
@@ -350,7 +355,7 @@ void handleHeaterStatus() {
   doc["pidKp"] = pidKp;
   doc["pidKi"] = pidKi;
   doc["pidKd"] = pidKd;
-  doc["heaterRuntime"] = relayState ? (millis() - relayOnTime) / 1000 : 0;
+  doc["heaterRuntime"] = (heaterDutyCycle > 0) ? (millis() - heaterStartTime) / 1000 : 0;
   String jsonString;
   serializeJson(doc, jsonString);
   server.send(200, "application/json", jsonString);
