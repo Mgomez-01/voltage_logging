@@ -9,21 +9,21 @@ volatile bool emergencyShutdown = false;     // Emergency shutdown flag
 const unsigned long SAFETY_CHECK_INTERVAL = 500;  // Safety check every 500ms
 const unsigned long WATCHDOG_TIMEOUT = 10000;     // 10 second watchdog timeout
 
-void ICACHE_RAM_ATTR hardwareSafetyCheck() {
+void IRAM_ATTR hardwareSafetyCheck() {
   lastSafetyCheck = millis();
-  if (relayState && millis() - relayOnTime > MAX_HEATER_TIME) {
-    digitalWrite(RELAY_PIN, LOW);
-    relayState = false;
+  if (heaterDutyCycle > 0 && millis() - heaterStartTime > MAX_HEATER_TIME) {
+    analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
+    heaterDutyCycle = 0.0;
     heaterEnabled = false;
     pidEnabled = false;
     emergencyShutdown = true;
   }
 }
 
-void ICACHE_RAM_ATTR watchdogCheck() {
+void IRAM_ATTR watchdogCheck() {
   if (!systemAlive && !emergencyShutdown) { // Only trigger if not already shut down
     Serial.println("!!! WATCHDOG STARVED - EMERGENCY SHUTDOWN !!!");
-    digitalWrite(RELAY_PIN, LOW);
+    analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
     emergencyShutdown = true;
     // Don't rely on hardware WDT, manage via flag
   }
@@ -47,8 +47,8 @@ void feedWatchdog() {
 
 void emergencyShutdownSystem() {
   static unsigned long lastShutdownMessage = 0;
-  digitalWrite(RELAY_PIN, LOW);
-  relayState = false;
+  analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
+  heaterDutyCycle = 0.0;
   heaterEnabled = false;
   pidEnabled = false;
   dataLoggingEnabled = false; // Stop logging

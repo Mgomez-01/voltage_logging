@@ -22,6 +22,7 @@
 #define DEBUG_SERIAL 1
 #define DEBUG_ADC 1
 #define DEBUG_WEBSOCKET 1
+#undef DEBUG_WIFI  // Undefine ESP8266WiFi library's version
 #define DEBUG_WIFI 1
 #define DEBUG_HEATER 1
 #define DEBUG_PID 1
@@ -141,23 +142,29 @@ void loop() {
     emergencyShutdownSystem();
     return;
   }
+  
   server.handleClient();
   webSocket.loop();
   checkSafetyTimeout(); // General safety system monitoring
+  
+  // PID control runs independently of data logging
+  if (pidEnabled && millis() - lastPIDUpdate >= PID_INTERVAL) {
+    updatePIDController();
+    lastPIDUpdate = millis();
+  }
+  
+  // Data logging and sensor reading
   if (dataLoggingEnabled) {
     if (millis() - lastSample >= SAMPLE_INTERVAL) {
       readSensors();
       lastSample = millis();
-    }
-    if (pidEnabled && millis() - lastPIDUpdate >= PID_INTERVAL) {
-      updatePIDController();
-      lastPIDUpdate = millis();
     }
     if (millis() - lastWebUpdate >= WEB_UPDATE_INTERVAL) {
       sendWebUpdate();
       lastWebUpdate = millis();
     }
   }
+  
   if (millis() - lastDebugPrint >= DEBUG_INTERVAL) {
     printDebugStats();
     lastDebugPrint = millis();

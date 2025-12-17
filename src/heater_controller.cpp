@@ -135,6 +135,14 @@ void checkHeaterSafety() {
 void updatePIDController() {
   if (!pidEnabled) return;
   
+  #if DEBUG_PID
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 5000) {  // Log every 5 seconds that PID is active
+    Serial.println("PID: Controller active and running");
+    lastDebug = millis();
+  }
+  #endif
+  
   // Find the most recent valid temperature reading
   float currentTemp = NAN;
   int idx = -1;
@@ -231,12 +239,13 @@ void updatePIDController() {
   }
   #endif
   #if DEBUG_PID
+  // Always show PID updates when active
   Serial.print("PID: Target=");
   Serial.print(targetTemperature);
   Serial.print("°C, Current=");
   Serial.print(currentTemp);
   Serial.print("°C, Error=");
-  Serial.print(pidError);
+  Serial.print(pidError, 2);
   Serial.print(", Output=");
   Serial.print(pidOutput, 1);
   Serial.print("%, PWM=");
@@ -244,6 +253,8 @@ void updatePIDController() {
   Serial.print("%, BufIdx=");
   Serial.print(bufferIndex);
   Serial.print(", ReadIdx=");
-  Serial.println(idx);
+  Serial.print(idx);
+  Serial.print(", Logging=");
+  Serial.println(dataLoggingEnabled ? "ON" : "OFF");
   #endif
 }

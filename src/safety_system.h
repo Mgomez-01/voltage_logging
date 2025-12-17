@@ -16,8 +16,8 @@ extern const unsigned long SAFETY_CHECK_INTERVAL;  // Safety check every 500ms
 extern const unsigned long WATCHDOG_TIMEOUT;     // 10 second watchdog timeout
 
 // Function declarations
-void ICACHE_RAM_ATTR hardwareSafetyCheck();
-void ICACHE_RAM_ATTR watchdogCheck();
+void IRAM_ATTR hardwareSafetyCheck();
+void IRAM_ATTR watchdogCheck();
 void initializeSafetySystem();
 void feedWatchdog();
 void emergencyShutdownSystem();

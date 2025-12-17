@@ -314,7 +314,9 @@ void handlePIDEnable() {
   heaterEnabled = true;
   pidIntegral = 0;
   pidLastError = 0;
-  server.send(200, "text/plain", "PID control enabled");
+  lastPIDUpdate = millis() - PID_INTERVAL; // Force immediate PID update
+  Serial.println("PID: Taking control of heater PWM");
+  server.send(200, "text/plain", "PID control enabled - taking over heater control");
 }
 
 void handlePIDDisable() {
