@@ -15,6 +15,9 @@ SensorReading readings[BUFFER_SIZE];
 int bufferIndex = 0;
 bool bufferFull = false;
 
+// File rotation settings
+const unsigned long MAX_FILE_SIZE = 50000000;  // 50MB max per file (prevents 4GB FAT32 limit)
+
 bool initializeSDCard() {
   if (!SD.begin(SS)) {
     Serial.println("ERROR: SD card initialization failed!");
@@ -39,6 +42,38 @@ void writeBufferToFile() {
     feedWatchdog();
     Serial.println("[WATCHDOG] Fed before file write operation");
     
+    // Check if we need to rotate to a new file (prevent 4GB limit crash)
+    if (SD.exists(logFileName)) {
+        File sizeCheck = SD.open(logFileName, FILE_READ);
+        if (sizeCheck) {
+            unsigned long currentSize = sizeCheck.size();
+            sizeCheck.close();
+            
+            if (currentSize >= MAX_FILE_SIZE) {
+                Serial.print("FILE ROTATION: Current file reached ");
+                Serial.print(currentSize / 1000000);
+                Serial.print("MB (limit: ");
+                Serial.print(MAX_FILE_SIZE / 1000000);
+                Serial.println("MB)");
+                
+                // Get next available log filename
+                getNewLogFileName();
+                
+                // Create new file with header
+                File newFile = SD.open(logFileName, FILE_WRITE);
+                if (newFile) {
+                    newFile.println("timestamp,voltage,temperature,heater_state,target_temp,pid_output");
+                    newFile.close();
+                    Serial.print("FILE ROTATION: Created new log file: ");
+                    Serial.println(logFileName);
+                } else {
+                    Serial.println("FILE ROTATION: ERROR - Could not create new file!");
+                }
+            }
+        }
+    }
+    
+    // Open file for appending
     dataFile = SD.open(logFileName, FILE_WRITE);
     if (!dataFile) {
         Serial.println("ERROR: Could not open data file for writing!");

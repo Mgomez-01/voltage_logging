@@ -43,5 +43,6 @@ void handlePIDParams();
 void handleHeaterStatus();
 void handleListLogs();
 void handleDeleteLog();
+void handleSystemReset();
 
 #endif // WEB_INTERFACE_H

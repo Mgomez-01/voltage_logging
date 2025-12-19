@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include <math.h>  // For thermistor calculations
 #include <Ticker.h>  // For hardware timer-based safety system
+#include <SD.h>  // For file size monitoring
 #include "wifi_manager.h"
 #include "sensor_manager.h"
 #include "heater_controller.h"
@@ -254,6 +255,30 @@ void printDebugStats() {
     Serial.print("Total sensor readings: "); Serial.println(totalReadings);
     Serial.print("Current buffer index: "); Serial.print(bufferIndex); Serial.print("/"); Serial.print(BUFFER_SIZE); Serial.print(" ("); Serial.print((bufferIndex * 100) / BUFFER_SIZE); Serial.println("% full)");
     Serial.print("WebSocket messages sent: "); Serial.println(totalWebSocketMessages);
+    
+    // File size monitoring
+    if (SD.exists(logFileName)) {
+        File sizeCheck = SD.open(logFileName, FILE_READ);
+        if (sizeCheck) {
+            unsigned long fileSize = sizeCheck.size();
+            sizeCheck.close();
+            float fileSizeMB = fileSize / 1000000.0;
+            float percentFull = (fileSize * 100.0) / MAX_FILE_SIZE;
+            Serial.print("Current log file: ");
+            Serial.print(logFileName);
+            Serial.print(" (");
+            Serial.print(fileSizeMB, 2);
+            Serial.print("MB / ");
+            Serial.print(MAX_FILE_SIZE / 1000000);
+            Serial.print("MB max, ");
+            Serial.print(percentFull, 1);
+            Serial.println("% full)");
+            
+            if (percentFull > 90) {
+                Serial.println("  ⚠️  File will rotate soon (>90% full)");
+            }
+        }
+    }
     Serial.println("HEATER CONTROL STATUS:");
     Serial.print("  Heater: "); Serial.print(heaterEnabled ? "ENABLED" : "DISABLED"); 
     Serial.print(", PWM: "); Serial.print(heaterDutyCycle, 1); Serial.print("%");

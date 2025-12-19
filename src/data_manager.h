@@ -30,6 +30,9 @@ extern SensorReading readings[];
 extern int bufferIndex;
 extern bool bufferFull;
 
+// File rotation settings
+extern const unsigned long MAX_FILE_SIZE;
+
 // Function declarations
 void writeBufferToFile();
 void initializeDataFile();

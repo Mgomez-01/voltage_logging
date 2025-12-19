@@ -33,6 +33,9 @@ void setupWebServer() {
   // SD card routes
   server.on("/logs", handleListLogs);
   server.on("/logs/delete", handleDeleteLog);
+  
+  // System control routes
+  server.on("/system/reset", handleSystemReset);
 
   Serial.println("OK");
   server.begin();
@@ -430,4 +433,63 @@ void handleDeleteLog() {
   } else {
     server.send(400, "text/plain", "Missing file parameter");
   }
+}
+
+void handleSystemReset() {
+  Serial.println("HTTP: System reset requested");
+  
+  // Safety check - verify temperature is reasonable before allowing reset
+  selectMuxChannel(THERMISTOR_CHANNEL);
+  delay(5);
+  int tempADC = analogRead(A0);
+  float currentTemp = convertThermistorToTemperature(tempADC);
+  
+  // Don't allow reset if temperature is dangerously high
+  if (currentTemp > MAX_SAFE_TEMPERATURE - 10) {
+    Serial.print("RESET DENIED: Temperature too high (");
+    Serial.print(currentTemp);
+    Serial.println("°C)");
+    server.send(403, "text/plain", "Cannot reset - temperature still too high. Wait for cooling.");
+    return;
+  }
+  
+  // Check if temperature sensor is working
+  if (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200) {
+    Serial.println("RESET DENIED: Temperature sensor not reading properly");
+    server.send(403, "text/plain", "Cannot reset - temperature sensor failure. Check thermistor connection.");
+    return;
+  }
+  
+  Serial.println("RESET: Safety checks passed, clearing emergency state");
+  Serial.print("RESET: Current temperature: ");
+  Serial.print(currentTemp);
+  Serial.println("°C (safe)");
+  
+  // Clear emergency shutdown flag
+  emergencyShutdown = false;
+  
+  // Reset heater state
+  heaterEnabled = false;
+  pidEnabled = false;
+  setHeaterPower(0.0);
+  
+  // Reset PID state
+  pidIntegral = 0;
+  pidLastError = 0;
+  pidError = 0;
+  pidOutput = 0;
+  
+  // Reset safety system state
+  systemAlive = true;
+  
+  // Keep data logging paused (user must manually restart)
+  dataLoggingEnabled = false;
+  
+  Serial.println("RESET: System state cleared");
+  Serial.println("RESET: All heater control disabled");
+  Serial.println("RESET: Data logging paused");
+  Serial.println("RESET: System ready for normal operation");
+  Serial.println("RESET: User must manually re-enable desired features");
+  
+  server.send(200, "text/plain", "System reset successful. Emergency state cleared. Temperature: " + String(currentTemp, 1) + "°C");
 }

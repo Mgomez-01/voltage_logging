@@ -55,10 +55,11 @@ void emergencyShutdownSystem() {
   if (millis() - lastShutdownMessage > 5000) {
     Serial.println("*** EMERGENCY SHUTDOWN ACTIVE ***");
     Serial.println("*** HEATER DISABLED - SYSTEM SAFE ***");
-    Serial.println("*** Restart required to resume operation ***");
+    Serial.println("*** Use 'System Reset' button in web interface to recover ***");
+    Serial.println("*** Or send GET request to /system/reset ***");
     lastShutdownMessage = millis();
   }
-  server.handleClient(); // Keep server minimally responsive
-  webSocket.loop();      // Keep WS minimally responsive
+  server.handleClient(); // Keep server responsive for reset button
+  webSocket.loop();      // Keep WebSocket responsive
   delay(10); // Prevent tight loop in shutdown
 }
