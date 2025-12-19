@@ -54,7 +54,30 @@ void sendWebUpdate() {
   if (connectedClients > 0) {
     if (bufferIndex > 0 || bufferFull) {
       int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
-      JsonDocument doc;
+      
+      // Skip redundant updates to reduce memory allocations
+      static float lastSentTemp = -999;
+      static float lastSentVoltage = -999;
+      static bool lastSentHeaterState = false;
+      float currentTemp = readings[idx].temperature;
+      float currentVoltage = readings[idx].voltage;
+      bool currentHeaterState = readings[idx].heaterState;
+      
+      // Only send if changed significantly or heater state changed
+      if (abs(currentTemp - lastSentTemp) < 0.1 && 
+          abs(currentVoltage - lastSentVoltage) < 0.01 &&
+          currentHeaterState == lastSentHeaterState) {
+        return;  // Skip this update - no significant change
+      }
+      
+      lastSentTemp = currentTemp;
+      lastSentVoltage = currentVoltage;
+      lastSentHeaterState = currentHeaterState;
+      
+      // Use static document to avoid heap fragmentation
+      static StaticJsonDocument<256> doc;
+      doc.clear();
+      
       doc["timestamp"] = readings[idx].timestamp;
       doc["voltage"] = readings[idx].voltage;
       doc["temperature"] = readings[idx].temperature;
@@ -62,16 +85,18 @@ void sendWebUpdate() {
       doc["heaterState"] = readings[idx].heaterState;
       doc["targetTemp"] = readings[idx].targetTemp;
       doc["pidOutput"] = readings[idx].pidValue;
-      doc["loggingEnabled"] = dataLoggingEnabled; // Send current logging state
-      String jsonString;
-      serializeJson(doc, jsonString);
-      webSocket.broadcastTXT(jsonString);
+      doc["loggingEnabled"] = dataLoggingEnabled;
+      
+      char jsonBuffer[256];
+      serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
+      webSocket.broadcastTXT(jsonBuffer);
+      
       totalWebSocketMessages++;
       #if DEBUG_WEBSOCKET
       if (totalWebSocketMessages % 100 == 0) {
         Serial.print("WebSocket message #"); Serial.print(totalWebSocketMessages);
         Serial.print(" sent to "); Serial.print(connectedClients);
-        Serial.print(" clients: "); Serial.print(jsonString);
+        Serial.print(" clients: "); Serial.print(jsonBuffer);
         Serial.print(" (buffer idx: "); Serial.print(idx);
         Serial.print(", V: "); Serial.print(readings[idx].voltage, 4);
         Serial.print("V, T: "); Serial.print(readings[idx].temperature, 2); Serial.println("°C)");

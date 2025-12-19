@@ -19,13 +19,13 @@
 #endif
 
 // Debug configuration
-#define DEBUG_SERIAL 1
-#define DEBUG_ADC 1
-#define DEBUG_WEBSOCKET 1
+#define DEBUG_SERIAL 1      // General status - keep enabled
+#define DEBUG_ADC 0         // Turn off to reduce memory usage
+#define DEBUG_WEBSOCKET 0   // Turn off to reduce memory usage
 #undef DEBUG_WIFI  // Undefine ESP8266WiFi library's version
-#define DEBUG_WIFI 1
-#define DEBUG_HEATER 1
-#define DEBUG_PID 1
+#define DEBUG_WIFI 1        // WiFi status - keep enabled
+#define DEBUG_HEATER 1      // Safety-critical - keep enabled
+#define DEBUG_PID 0         // Turn off to reduce memory usage (enable only when tuning)
 
 
 
@@ -42,7 +42,7 @@ unsigned long lastSample = 0;
 unsigned long lastWebUpdate = 0;
 unsigned long lastDebugPrint = 0;
 const unsigned long SAMPLE_INTERVAL = 2; // Sample every 2ms (500Hz per channel, 1000Hz total)
-const unsigned long WEB_UPDATE_INTERVAL = 100; // Update web every 100ms
+const unsigned long WEB_UPDATE_INTERVAL = 500; // Update web every 500ms (reduced from 100ms to save memory)
 const unsigned long DEBUG_INTERVAL = 1000; // Debug print every 1 second
 
 // Data collection control
@@ -141,6 +141,16 @@ void loop() {
   if (emergencyShutdown) {
     emergencyShutdownSystem();
     return;
+  }
+  
+  // Automatic memory protection - stop logging if heap gets critically low
+  if (ESP.getFreeHeap() < 8000 && dataLoggingEnabled) {
+    Serial.println("MEMORY: Auto-stopping logging due to critically low heap!");
+    Serial.print("MEMORY: Free heap = ");
+    Serial.print(ESP.getFreeHeap());
+    Serial.println(" bytes");
+    dataLoggingEnabled = false;
+    flushDataBuffer();
   }
   
   server.handleClient();
@@ -272,6 +282,15 @@ void printDebugStats() {
         }
     } else if (!dataLoggingEnabled) { Serial.println("No buffered readings (logging paused)"); }
     Serial.print("Free heap: "); Serial.print(ESP.getFreeHeap()); Serial.println(" bytes");
+    
+    // Memory warning
+    if (ESP.getFreeHeap() < 10000) {
+        Serial.println("⚠️  WARNING: Low memory! Free heap < 10KB");
+        Serial.println("⚠️  Consider stopping data logging or reducing buffer size");
+    } else if (ESP.getFreeHeap() < 15000) {
+        Serial.println("⚠️  NOTICE: Memory getting low (< 15KB)");
+    }
+    
     Serial.println("===================================="); Serial.println();
 }
 
