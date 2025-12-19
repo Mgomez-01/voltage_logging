@@ -87,6 +87,21 @@
             <button onclick="relayOn()" class="btn" id="relayOnBtn">Turn ON</button>
             <button onclick="relayOff()" class="btn danger" id="relayOffBtn">Turn OFF</button>
             <button onclick="emergencyStop()" class="btn danger" style="margin-left: 20px;">EMERGENCY STOP</button>
+	    <button onclick="resetSystem()" class="btn btn-warning">
+  🔄 System Reset
+</button>
+
+<script>
+function resetSystem() {
+  if (!confirm('Reset system from emergency state?')) return;
+  fetch('/system/reset')
+    .then(response => response.text())
+    .then(data => {
+      alert(data);
+      location.reload();
+    });
+}
+</script>
         </div>
 
         <div class="control-panel">
