@@ -7,17 +7,17 @@ const int HEATER_PWM_PIN = 16; // GPIO16 (D0) for PWM control of MOSFET
 bool heaterEnabled = false;
 float heaterDutyCycle = 0.0; // Current PWM duty cycle (0-100%)
 unsigned long heaterStartTime = 0; // Time when heater was enabled
-const unsigned long MAX_HEATER_TIME = 600000; // 10 min safety timeout
-const float MAX_SAFE_TEMPERATURE = 120.0; // Maximum safe temperature in °C
+const unsigned long MAX_HEATER_TIME = 1800000; // 30 min safety timeout
+const float MAX_SAFE_TEMPERATURE = 130.0; // Maximum safe temperature in °C
 
 // PWM configuration
 // Lower frequency (5-10 Hz) is better for heater control to reduce MOSFET switching losses
 // and provide more accurate average power delivery
-const int PWM_FREQUENCY = 10; // 10 Hz PWM frequency
+const int PWM_FREQUENCY = 32; // 32 Hz PWM frequency
 const int PWM_RANGE = 1000;   // 0-1000 range for 0.1% resolution
 
 // PID Controller variables
-float targetTemperature = 65.0; // Default target temperature
+float targetTemperature = 45.0; // Default target temperature
 bool pidEnabled = false;
 float pidKp = 2.2;  // Proportional gain
 float pidKi = 0.25;  // Integral gain
