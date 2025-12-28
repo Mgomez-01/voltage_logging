@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Thermal Control Interface | ESP8266</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --text-main: #f8fafc;
+            --accent-blue: #38bdf8;
+            --heat-red: #ef4444;
+            --border-color: #334155;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        header {
+            background-color: #020617;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .status-badge {
+            background: rgba(34, 197, 94, 0.2);
+            color: #4ade80;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            border: 1px solid #22c55e;
+        }
+
+        main {
+            display: grid;
+            grid-template-columns: 1fr 360px;
+            gap: 15px;
+            padding: 15px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .panel {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--border-color);
+        }
+
+        .grid-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .grid-header h3 {
+            font-size: 1.1rem;
+            margin: 0;
+        }
+
+        .grid-header .hint {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+
+        .heater-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .node {
+            aspect-ratio: 1;
+            background: #334155;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            border: 2px solid transparent;
+            font-size: 0.8rem;
+            padding: 8px;
+        }
+
+        .node:hover {
+            border-color: var(--accent-blue);
+            background: #475569;
+        }
+
+        .node.selected {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+        }
+
+        .node.heating {
+            background: #ef4444;
+        }
+
+        .node span {
+            font-size: 0.7rem;
+            color: #94a3b8;
+        }
+
+        .node .temp {
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-top: 4px;
+        }
+
+        .control-section {
+            margin-bottom: 20px;
+        }
+
+        .control-section h3 {
+            margin: 0 0 12px 0;
+            font-size: 0.95rem;
+            color: var(--accent-blue);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 5px;
+        }
+
+        .input-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            font-size: 0.7rem;
+            color: #94a3b8;
+            margin-bottom: 3px;
+        }
+
+        input {
+            background: #0f172a;
+            border: 1px solid var(--border-color);
+            color: white;
+            padding: 6px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        button {
+            background: var(--accent-blue);
+            color: var(--bg-dark);
+            border: none;
+            padding: 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 5px;
+            font-size: 0.85rem;
+        }
+
+        button:hover { filter: brightness(1.1); }
+        button:disabled { background: #666; cursor: not-allowed; }
+
+        .terminal {
+            background: #020617;
+            color: #22c55e;
+            font-family: 'Courier New', monospace;
+            font-size: 0.7rem;
+            padding: 10px;
+            border-radius: 6px;
+            height: 100px;
+            overflow-y: auto;
+            border: 1px solid #1e293b;
+        }
+
+        .chart-placeholder {
+            flex-grow: 1;
+            background: #0f172a;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #475569;
+            border: 1px dashed var(--border-color);
+            font-size: 0.85rem;
+            padding: 20px;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            main { grid-template-columns: 1fr; }
+            .heater-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div style="font-weight: bold; font-size: 1.1rem;">⚡ Thermal Control Lab</div>
+    <div class="status-badge" id="connStatus">{{RELAY_STATUS_TEXT_INITIAL}}</div>
+</header>
+
+<main>
+    <div class="panel">
+        <div class="grid-header">
+            <h3>Heater/Sensor Array (4×4)</h3>
+            <div class="hint">Click node to inspect</div>
+        </div>
+        <div class="heater-grid" id="grid"></div>
+        <div class="chart-placeholder">
+            Real-time: Node <span id="activeNodeLabel">--</span><br>
+            Target: {{TARGET_TEMP_INITIAL}}°C | Current: <span id="chartTemp">--</span>°C
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="control-section">
+            <h3>PID Control: Node <span id="nodeID">--</span></h3>
+            <div class="input-grid">
+                <div class="field">
+                    <label>Target (°C)</label>
+                    <input type="number" id="setpoint" value="{{TARGET_TEMP_INITIAL}}" step="0.5">
+                </div>
+                <div class="field">
+                    <label>Kₚ</label>
+                    <input type="number" id="kp" value="{{PID_KP_INITIAL}}" step="0.1">
+                </div>
+                <div class="field">
+                    <label>Kᵢ</label>
+                    <input type="number" id="ki" value="{{PID_KI_INITIAL}}" step="0.1">
+                </div>
+                <div class="field">
+                    <label>Kd</label>
+                    <input type="number" id="kd" value="{{PID_KD_INITIAL}}" step="0.1">
+                </div>
+            </div>
+            <button onclick="updatePID()" style="width: 100%;">Update Controller</button>
+        </div>
+
+        <div class="control-section">
+            <h3>Heater Commands</h3>
+            <div class="input-grid">
+                <button onclick="heaterOn()" id="onBtn">Heat ON</button>
+                <button onclick="heaterOff()" id="offBtn" style="background: #dc3545;">Heat OFF</button>
+            </div>
+            <button onclick="emergencyStop()" style="background: var(--heat-red); color: white; width: 100%;">EMERGENCY STOP</button>
+        </div>
+
+        <h3 style="font-size: 0.95rem; color: var(--accent-blue); margin: 0 0 8px 0;">System Log</h3>
+        <div class="terminal" id="term">
+> System ready<br>
+> Heater: {{RELAY_STATUS_TEXT_INITIAL}}<br>
+> PID: {{PID_STATUS_TEXT_INITIAL}}
+        </div>
+    </div>
+</main>
+
+<script>
+    let ws, selectedNode = null;
+    const nodes = [];
+    
+    // Initialize 16 nodes (4x4 grid)
+    function initGrid() {
+        const grid = document.getElementById('grid');
+        for (let i = 0; i < 16; i++) {
+            const node = document.createElement('div');
+            node.className = 'node';
+            if (Math.random() > 0.75) node.classList.add('heating');
+            
+            const temp = (22 + Math.random() * 5).toFixed(1);
+            node.innerHTML = '<span>#' + i + '</span><div class="temp">' + temp + '°</div>';
+            
+            node.onclick = (function(id, elem) {
+                return function() { selectNode(id, elem); };
+            })(i, node);
+            
+            nodes.push({ elem: node, temp: temp, heating: node.classList.contains('heating') });
+            grid.appendChild(node);
+        }
+        log('Grid initialized: 16 nodes');
+    }
+
+    function selectNode(id, elem) {
+        for (var i = 0; i < nodes.length; i++) {
+            nodes[i].elem.classList.remove('selected');
+        }
+        elem.classList.add('selected');
+        selectedNode = id;
+        document.getElementById('nodeID').innerText = id;
+        document.getElementById('activeNodeLabel').innerText = id;
+        log('Selected Node ' + id);
+    }
+
+    function log(msg) {
+        const term = document.getElementById('term');
+        const time = new Date().toLocaleTimeString();
+        term.innerHTML += '<br>> [' + time + '] ' + msg;
+        term.scrollTop = term.scrollHeight;
+    }
+
+    function updatePID() {
+        if (selectedNode === null) {
+            alert('Select a node first');
+            return;
+        }
+        const kp = document.getElementById('kp').value;
+        const ki = document.getElementById('ki').value;
+        const kd = document.getElementById('kd').value;
+        const temp = document.getElementById('setpoint').value;
+        
+        fetch('/pid/params?kp=' + kp + '&ki=' + ki + '&kd=' + kd)
+            .then(function() { return fetch('/temp/set?temp=' + temp); })
+            .then(function() { log('Node ' + selectedNode + ': Set ' + temp + '°C, Kp=' + kp); })
+            .catch(function(e) { log('Error: ' + e.message); });
+    }
+
+    function heaterOn() {
+        if (selectedNode === null) {
+            alert('Select a node first');
+            return;
+        }
+        fetch('/relay/on')
+            .then(function() {
+                nodes[selectedNode].elem.classList.add('heating');
+                log('Node ' + selectedNode + ': Heater ON');
+            })
+            .catch(function(e) { log('Error: ' + e.message); });
+    }
+
+    function heaterOff() {
+        fetch('/relay/off')
+            .then(function() {
+                if (selectedNode !== null) {
+                    nodes[selectedNode].elem.classList.remove('heating');
+                }
+                log('Heater OFF');
+            })
+            .catch(function(e) { log('Error: ' + e.message); });
+    }
+
+    function emergencyStop() {
+        if (!confirm('EMERGENCY STOP?')) return;
+        Promise.all([fetch('/relay/off'), fetch('/pid/disable')])
+            .then(function() {
+                for (var i = 0; i < nodes.length; i++) {
+                    nodes[i].elem.classList.remove('heating');
+                }
+                log('EMERGENCY STOP COMPLETE');
+            });
+    }
+
+    function initWS() {
+        const host = window.location.hostname;
+        ws = new WebSocket('ws://' + host + ':81');
+        
+        ws.onopen = function() {
+            document.getElementById('connStatus').textContent = 'CONNECTED';
+            log('WebSocket connected');
+        };
+        
+        ws.onmessage = function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.temperature) {
+                    document.getElementById('chartTemp').textContent = data.temperature.toFixed(1);
+                    if (selectedNode !== null) {
+                        const temp = nodes[selectedNode].elem.querySelector('.temp');
+                        if (temp) temp.textContent = data.temperature.toFixed(1) + '°';
+                    }
+                }
+                if (data.heaterState !== undefined && selectedNode !== null) {
+                    if (data.heaterState) {
+                        nodes[selectedNode].elem.classList.add('heating');
+                    } else {
+                        nodes[selectedNode].elem.classList.remove('heating');
+                    }
+                }
+            } catch(e) { console.error(e); }
+        };
+        
+        ws.onclose = function() {
+            document.getElementById('connStatus').textContent = 'DISCONNECTED';
+            setTimeout(initWS, 2000);
+        };
+    }
+
+    // Fallback polling if WS fails
+    function startPolling() {
+        setInterval(function() {
+            fetch('/status')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    document.getElementById('chartTemp').textContent = data.temperature.toFixed(1);
+                })
+                .catch(function() {});
+        }, 2000);
+    }
+
+    window.onload = function() {
+        initGrid();
+        setTimeout(initWS, 1000);
+        setTimeout(startPolling, 5000); // Backup if WS fails
+        log('System initialized');
+    };
+</script>
+
+</body>
+</html>
