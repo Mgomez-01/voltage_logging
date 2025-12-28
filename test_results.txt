@@ -1,0 +1,550 @@
+============================= test session starts ==============================
+platform linux -- Python 3.10.14, pytest-8.3.5, pluggy-1.5.0
+rootdir: /home/speedy/repos/playground_claude/voltage_logging
+plugins: mock-3.10.0, asyncio-1.0.0, anyio-4.9.0, cov-4.1.0
+asyncio: mode=strict, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 23 items
+
+tests/test_frontend.py ...FFFFFFFF..                                     [ 56%]
+tests/test_websocket.py EEEEEEEEEE                                       [100%]
+
+==================================== ERRORS ====================================
+_ ERROR at setup of TestWebSocketConnection.test_websocket_connection_attempt[asyncio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketConnection.test_websocket_message_handling[asyncio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketConnection.test_websocket_fallback_to_polling[asyncio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+__ ERROR at setup of TestWebSocketDataFlow.test_sensor_data_parsing[asyncio] ___
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketDataFlow.test_logging_pause_affects_websocket[asyncio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketConnection.test_websocket_connection_attempt[trio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketConnection.test_websocket_message_handling[trio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketConnection.test_websocket_fallback_to_polling[trio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+____ ERROR at setup of TestWebSocketDataFlow.test_sensor_data_parsing[trio] ____
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+_ ERROR at setup of TestWebSocketDataFlow.test_logging_pause_affects_websocket[trio] _
+ScopeMismatch: You tried to access the module scoped fixture anyio_backend with a session scoped request object. Requesting fixture stack:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:76:  def wrapper(*args: 'Any', anyio_backend: 'Any', request: 'SubRequest', **kwargs: 'Any') -> 'Any'
+Requested fixture:
+../../../miniforge3/lib/python3.10/site-packages/anyio/pytest_plugin.py:173:  def anyio_backend(request: 'Any') -> 'Any'
+=================================== FAILURES ===================================
+__________________ TestDataLogging.test_start_logging_button ___________________
+
+self = <test_frontend.TestDataLogging object at 0x75e79130dba0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_start_logging_button(self, page: Page, test_html_path, mock_server):
+        """Test start logging button functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+        # Set up the fetch mock AFTER loading the page
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                console.log('Fetch called with URL:', url, 'Type:', typeof url);
+                if (url == null) {{
+                    console.error('URL is null or undefined:', url);
+                    return Promise.reject(new Error('URL is null or undefined: ' + url));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                console.log('Mock URL:', mockUrl);
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:174: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e7904167a0>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined: null
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:6:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+___________________ TestDataLogging.test_stop_logging_button ___________________
+
+self = <test_frontend.TestDataLogging object at 0x75e79130dde0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_stop_logging_button(self, page: Page, test_html_path, mock_server):
+        """Test stop logging button functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+        # Mock the fetch function
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{  // Corrected: removed duplicate 'if'
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e79114a320>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+____________________ TestHeaterControl.test_relay_on_button ____________________
+
+self = <test_frontend.TestHeaterControl object at 0x75e79130e0b0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_relay_on_button(self, page: Page, test_html_path, mock_server):
+        """Test relay on button functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:249: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e790416290>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+____________________ TestHeaterControl.test_emergency_stop _____________________
+
+self = <test_frontend.TestHeaterControl object at 0x75e79130e2f0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_emergency_stop(self, page: Page, test_html_path, mock_server):
+        """Test emergency stop functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:281: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e7904b01f0>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+________________________ TestPIDControl.test_enable_pid ________________________
+
+self = <test_frontend.TestPIDControl object at 0x75e79130e590>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_enable_pid(self, page: Page, test_html_path, mock_server):
+        """Test enable PID functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:318: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e79118c670>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+__________________ TestPIDControl.test_set_target_temperature __________________
+
+self = <test_frontend.TestPIDControl object at 0x75e79130e7d0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_set_target_temperature(self, page: Page, test_html_path, mock_server):
+        """Test setting target temperature"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:352: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e790416710>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+__________________ TestPIDControl.test_update_pid_parameters ___________________
+
+self = <test_frontend.TestPIDControl object at 0x75e79130e470>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_update_pid_parameters(self, page: Page, test_html_path, mock_server):
+        """Test updating PID parameters"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:385: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e79112b9a0>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+___________________ TestDataDisplay.test_clear_data_function ___________________
+
+self = <test_frontend.TestDataDisplay object at 0x75e79130d7b0>
+page = <Page url='file:///home/speedy/repos/playground_claude/voltage_logging/index.test.html'>
+test_html_path = PosixPath('/home/speedy/repos/playground_claude/voltage_logging/index.test.html')
+mock_server = 'http://localhost:41555'
+
+    def test_clear_data_function(self, page: Page, test_html_path, mock_server):
+        """Test clear data functionality"""
+        page.goto(f"file://{test_html_path.absolute()}")
+    
+>       page.evaluate(f"""
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {{
+                if (url == null) {{
+                    console.error('URL is null or undefined');
+                    return Promise.reject(new Error('URL is null or undefined'));
+                }}
+                const mockUrl = '{mock_server}' + url;
+                return originalFetch(mockUrl, options);
+            }};
+        """)
+
+tests/test_frontend.py:424: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../miniforge3/lib/python3.10/site-packages/playwright/sync_api/_generated.py:8536: in evaluate
+    self._sync(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_page.py:468: in evaluate
+    return await self._main_frame.evaluate(expression, arg)
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_frame.py:278: in evaluate
+    await self._channel.send(
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:61: in send
+    return await self._connection.wrap_api_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <playwright._impl._connection.Connection object at 0x75e7911a0ee0>
+cb = <function Channel.send.<locals>.<lambda> at 0x75e790416a70>
+is_internal = False
+
+    async def wrap_api_call(
+        self, cb: Callable[[], Any], is_internal: bool = False
+    ) -> Any:
+        if self._api_zone.get():
+            return await cb()
+        task = asyncio.current_task(self._loop)
+        st: List[inspect.FrameInfo] = getattr(task, "__pw_stack__", inspect.stack())
+        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal)
+        self._api_zone.set(parsed_st)
+        try:
+            return await cb()
+        except Exception as error:
+>           raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E           playwright._impl._errors.Error: Page.evaluate: Error: URL is null or undefined
+E               at window.fetch (eval at evaluate (:313:29), <anonymous>:5:43)
+E               at UtilityScript.evaluate (<anonymous>:320:18)
+E               at UtilityScript.<anonymous> (<anonymous>:1:44)
+
+../../../miniforge3/lib/python3.10/site-packages/playwright/_impl/_connection.py:528: Error
+=========================== short test summary info ============================
+FAILED tests/test_frontend.py::TestDataLogging::test_start_logging_button - p...
+FAILED tests/test_frontend.py::TestDataLogging::test_stop_logging_button - pl...
+FAILED tests/test_frontend.py::TestHeaterControl::test_relay_on_button - play...
+FAILED tests/test_frontend.py::TestHeaterControl::test_emergency_stop - playw...
+FAILED tests/test_frontend.py::TestPIDControl::test_enable_pid - playwright._...
+FAILED tests/test_frontend.py::TestPIDControl::test_set_target_temperature - ...
+FAILED tests/test_frontend.py::TestPIDControl::test_update_pid_parameters - p...
+FAILED tests/test_frontend.py::TestDataDisplay::test_clear_data_function - pl...
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_connection_attempt[asyncio]
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_message_handling[asyncio]
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_fallback_to_polling[asyncio]
+ERROR tests/test_websocket.py::TestWebSocketDataFlow::test_sensor_data_parsing[asyncio]
+ERROR tests/test_websocket.py::TestWebSocketDataFlow::test_logging_pause_affects_websocket[asyncio]
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_connection_attempt[trio]
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_message_handling[trio]
+ERROR tests/test_websocket.py::TestWebSocketConnection::test_websocket_fallback_to_polling[trio]
+ERROR tests/test_websocket.py::TestWebSocketDataFlow::test_sensor_data_parsing[trio]
+ERROR tests/test_websocket.py::TestWebSocketDataFlow::test_logging_pause_affects_websocket[trio]
+==================== 8 failed, 5 passed, 10 errors in 5.14s ====================
