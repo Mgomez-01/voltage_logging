@@ -465,8 +465,19 @@ void handleSystemReset() {
   Serial.print(currentTemp);
   Serial.println("°C (safe)");
   
-  // Clear emergency shutdown flag
+  // CRITICAL: Clear the data buffer FIRST to remove stale temperature readings
+  // This prevents old high-temp readings from triggering another emergency
+  // Do this BEFORE clearing emergency flag to prevent race condition
+  bufferIndex = 0;
+  bufferFull = false;
+  Serial.println("RESET: Data buffer cleared (removed stale readings)");
+  
+  // Small delay to ensure any in-flight safety checks see the cleared buffer
+  delay(10);
+  
+  // Clear emergency shutdown flag (safe now that buffer is cleared)
   emergencyShutdown = false;
+  Serial.println("RESET: Emergency shutdown flag cleared");
   
   // Reset heater state
   heaterEnabled = false;
