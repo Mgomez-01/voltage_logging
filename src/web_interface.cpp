@@ -493,6 +493,9 @@ void handleSystemReset() {
   // Reset safety system state
   systemAlive = true;
   
+  // Reset emergency cleanup flag (in safety_system.cpp)
+  // This is handled by clearing emergencyShutdown flag which resets the static in emergencyShutdownSystem()
+  
   // Keep data logging paused (user must manually restart)
   dataLoggingEnabled = false;
   

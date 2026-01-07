@@ -23,6 +23,7 @@ void IRAM_ATTR hardwareSafetyCheck() {
 void IRAM_ATTR watchdogCheck() {
   if (!systemAlive && !emergencyShutdown) { // Only trigger if not already shut down
     Serial.println("!!! WATCHDOG STARVED - EMERGENCY SHUTDOWN !!!");
+    Serial.println("!!! Forcing immediate file cleanup !!!");
     analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
     emergencyShutdown = true;
     // Don't rely on hardware WDT, manage via flag
@@ -47,11 +48,25 @@ void feedWatchdog() {
 
 void emergencyShutdownSystem() {
   static unsigned long lastShutdownMessage = 0;
+  static bool cleanupDone = false;
+  
+  // Reset cleanup flag if no longer in emergency (allows re-entry)
+  if (!emergencyShutdown) {
+    cleanupDone = false;
+  }
+  
+  // Perform cleanup once per emergency event
+  if (!cleanupDone && emergencyShutdown) {
+    emergencyFileCleanup();  // Close any open files
+    cleanupDone = true;
+  }
+  
   analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
   heaterDutyCycle = 0.0;
   heaterEnabled = false;
   pidEnabled = false;
   dataLoggingEnabled = false; // Stop logging
+  
   if (millis() - lastShutdownMessage > 5000) {
     Serial.println("*** EMERGENCY SHUTDOWN ACTIVE ***");
     Serial.println("*** HEATER DISABLED - SYSTEM SAFE ***");

@@ -40,5 +40,6 @@ void clearDataFile();
 void flushDataBuffer();
 bool initializeSDCard();
 void getNewLogFileName();
+void emergencyFileCleanup();
 
 #endif // DATA_MANAGER_H
