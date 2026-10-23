@@ -24,6 +24,7 @@
             flex-direction: column;
             height: 100vh;
             overflow: hidden;
+            width: 100vw;
         }
 
         header {
@@ -52,6 +53,7 @@
             padding: 15px;
             flex: 1;
             min-height: 0;
+            min-width: 0;
             overflow: hidden;
         }
 
@@ -64,6 +66,7 @@
             border: 1px solid var(--border-color);
             overflow: hidden;
             min-height: 0;
+            min-width: 0;
         }
 
         /* Left panel with grid - use CSS grid layout */
@@ -93,6 +96,7 @@
         /* Container for the grid with scrolling */
         .grid-container {
             overflow-y: auto;
+            overflow-x: hidden;
             min-height: 0;
             display: flex;
             align-items: center;
@@ -121,6 +125,7 @@
             border: 2px solid transparent;
             font-size: 0.8rem;
             padding: 8px;
+            min-width: 0;
         }
 
         .node:hover {
@@ -150,6 +155,7 @@
 
         .control-section {
             margin-bottom: 20px;
+            min-width: 0;
         }
 
         .control-section h3 {
@@ -158,17 +164,22 @@
             color: var(--accent-blue);
             border-bottom: 1px solid var(--border-color);
             padding-bottom: 5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .input-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 8px;
+            min-width: 0;
         }
 
         .field {
             display: flex;
             flex-direction: column;
+            min-width: 0;
         }
 
         label {
@@ -184,6 +195,8 @@
             padding: 6px;
             border-radius: 4px;
             font-size: 0.85rem;
+            min-width: 0;
+            width: 100%;
         }
 
         button {
@@ -196,6 +209,10 @@
             cursor: pointer;
             margin-top: 5px;
             font-size: 0.85rem;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         button:hover { filter: brightness(1.1); }
@@ -210,7 +227,9 @@
             border-radius: 6px;
             height: 100px;
             overflow-y: auto;
+            overflow-x: hidden;
             border: 1px solid #1e293b;
+            word-wrap: break-word;
         }
 
         .chart-placeholder {
@@ -231,6 +250,13 @@
         /* Right panel with controls - scrollable */
         .panel.controls-panel {
             overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        @media (max-width: 1024px) {
+            main { 
+                grid-template-columns: 1fr 320px;
+            }
         }
 
         @media (max-width: 768px) {
