@@ -6,7 +6,7 @@
 #include <ArduinoJson.h>
 #include <math.h>  // For thermistor calculations
 #include <Ticker.h>  // For hardware timer-based safety system
-#include <SD.h>  // For file size monitoring
+#include <SD.h>  // SD card log files (also used for file size monitoring)
 #include "wifi_manager.h"
 #include "sensor_manager.h"
 #include "heater_controller.h"
@@ -19,7 +19,9 @@
 #define A0 17  // ESP8266 ADC pin
 #endif
 
-// Debug configuration
+// Debug configuration for main.cpp only. Each .cpp file is compiled separately,
+// so these do not affect heater_controller.cpp or web_interface.cpp, which set
+// their own DEBUG_* values.
 #define DEBUG_SERIAL 1      // General status - keep enabled
 #define DEBUG_ADC 0         // Turn off to reduce memory usage
 #define DEBUG_WEBSOCKET 0   // Turn off to reduce memory usage
@@ -42,7 +44,7 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 unsigned long lastSample = 0;
 unsigned long lastWebUpdate = 0;
 unsigned long lastDebugPrint = 0;
-const unsigned long SAMPLE_INTERVAL = 2; // Sample every 2ms (500Hz per channel, 1000Hz total)
+const unsigned long SAMPLE_INTERVAL = 2; // One ADC read every 2 ms, alternating channels (up to 250 Hz per channel, 250 CSV rows/s)
 const unsigned long WEB_UPDATE_INTERVAL = 500; // Update web every 500ms (reduced from 100ms to save memory)
 const unsigned long DEBUG_INTERVAL = 1000; // Debug print every 1 second
 
@@ -125,7 +127,7 @@ void setup() {
   Serial.println("   Click 'Start Logging' in web interface to begin");
   Serial.println("   Voltage Channel 0, Temperature Channel 1");
   Serial.println("  PWM HEATER CONTROL READY");
-  Serial.println("   PWM pin: GPIO16 (D0) - 10 Hz frequency");
+  Serial.println("   PWM pin: GPIO16 (D0) - 32 Hz");
   Serial.println("   MOSFET: AOD4144 N-channel");
   Serial.println("   PID control with smooth 0-100% power regulation");
   Serial.println("   Safety timeout: 30 minutes continuous operation");
