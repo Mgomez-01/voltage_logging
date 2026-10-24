@@ -11,9 +11,11 @@ const unsigned long MAX_HEATER_TIME = 1800000; // 30 min safety timeout
 const float MAX_SAFE_TEMPERATURE = 130.0; // Maximum safe temperature in °C
 
 // PWM configuration
-// Lower frequency (5-10 Hz) is better for heater control to reduce MOSFET switching losses
-// and provide more accurate average power delivery
-const int PWM_FREQUENCY = 32; // 32 Hz PWM frequency
+// A low frequency suits a heater (fewer MOSFET switching losses).
+// The ESP8266 core docs list 100 Hz as the analogWriteFreq() minimum, but the
+// default PWM engine in core 3.1.2 uses the requested 32 Hz directly (only the
+// fallback waveform path clamps to 100 Hz).
+const int PWM_FREQUENCY = 32; // PWM frequency in Hz
 const int PWM_RANGE = 1000;   // 0-1000 range for 0.1% resolution
 
 // PID Controller variables
@@ -29,7 +31,8 @@ float pidIntegral = 0.0;
 const unsigned long PID_INTERVAL = 500; // PID update interval in ms
 unsigned long lastPIDUpdate = 0;
 
-// Debug configuration (accessing from main file defines)
+// Debug configuration for this file only (the DEBUG_* defines in main.cpp
+// do not reach other .cpp files)
 #define DEBUG_HEATER 1
 #define DEBUG_PID 1
 
@@ -115,7 +118,7 @@ void checkHeaterSafety() {
       emergencyShutdown = true;
     }
     
-    // Check for maximum runtime (10 minutes continuous heating)
+    // Check for maximum runtime (MAX_HEATER_TIME = 30 minutes continuous heating)
     if (heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
       Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
       emergencyShutdown = true;
