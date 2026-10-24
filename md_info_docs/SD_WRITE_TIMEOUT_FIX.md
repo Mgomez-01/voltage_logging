@@ -1,5 +1,7 @@
 # SD Card Write Timeout Fix - Watchdog Starvation Protection
 
+> **Status:** implemented in the current firmware (`src/data_manager.cpp`, `src/safety_system.cpp`; Jan 2026).
+
 ## Problem Identified
 
 The watchdog was starving during SD card write operations, causing emergency shutdowns and potentially corrupting the filesystem.

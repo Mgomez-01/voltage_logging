@@ -1,5 +1,7 @@
 # Example Migration: data_manager.cpp
 
+> **Status: example only, not applied.** `src/data_manager.cpp` does not include `debug_config.h` yet. See DEBUG_MIGRATION_GUIDE.md.
+
 ## Complete File Migration Example
 
 This shows how to migrate `data_manager.cpp` from direct Serial.print to the debug macro system.
@@ -12,7 +14,7 @@ This shows how to migrate `data_manager.cpp` from direct Serial.print to the deb
 ```cpp
 #include "data_manager.h"
 #include "safety_system.h"
-#include "debug.h"  // ← ADD THIS
+#include "debug_config.h"  // ← ADD THIS
 ```
 
 ---

@@ -20,7 +20,7 @@
 - `*.map` - Memory map files
 
 ### **Temporary & Log Files**
-- `*.log` - Log files
+- `*.log` - Log files (this includes SD card logs like `data_3.log` if you copy them into the project folder)
 - `errors_results.txt` - Your debug output file
 - `*.tmp`, `*.bak` - Temporary/backup files
 
@@ -36,15 +36,16 @@
 ## ✅ What's Kept in Git
 
 ### **Essential Project Files**
-- `src/main.cpp` - Your main code
+- `src/` - Firmware (`main.cpp` and the module files)
+- `data/index.template.html` - Web page (uploaded to LittleFS)
 - `platformio.ini` - Build configuration
+- `config.h` - Settings reference
 - `README.md`, `*.md` - Documentation
 - `Makefile` - Build automation
-- `lib/`, `include/`, `test/` - Project directories
 
 ### **Configuration Files**
-- `.clang_complete` - Language server config
-- `generate_compile_commands.sh` - Setup script
+- `generate_compile_commands.sh` - Language server setup script
+- (`.clang_complete` and `compile_commands.json` are generated and ignored)
 
 ## 🔧 Customization
 

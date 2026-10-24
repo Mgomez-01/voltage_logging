@@ -1,5 +1,7 @@
 # MOSFET Gate Drive - Voltage Considerations
 
+> **Status:** design notes from the PWM conversion (Dec 2025). The current build uses the recommended direct connection: GPIO16 → AOD4144 gate with a 10 kΩ pull-down to GND, no divider. See WIRING_GUIDE.md.
+
 ## Your Setup Analysis
 
 You mentioned using a **10:1 voltage divider** on the MOSFET gate. Let's analyze if this is necessary for the AOD4144.
@@ -94,7 +96,7 @@ For maximum Rds(on) performance:
 The code I provided assumes **direct GPIO connection**:
 - GPIO16 → MOSFET Gate (with pull-down resistor)
 - PWM at 3.3V logic level
-- 10 Hz frequency (low enough for good averaging)
+- 32 Hz frequency (low enough for good averaging; was 10 Hz when these notes were written)
 
 ### If You Have Different Hardware:
 Please clarify your exact setup:

@@ -1,5 +1,7 @@
 # Debug System - Quick Reference
 
+> **Status: planned, not done yet.** The macros below are defined in `src/debug_config.h`, but no source file includes it yet. See DEBUG_MIGRATION_GUIDE.md.
+
 ## Overview
 
 Conditional compilation system for debug output. Set `DEBUG_MASTER 0` for RELEASE builds with zero debug overhead.
@@ -10,7 +12,7 @@ Conditional compilation system for debug output. Set `DEBUG_MASTER 0` for RELEAS
 
 ### 1. Include Header
 ```cpp
-#include "debug.h"  // Add to each source file
+#include "debug_config.h"  // Add to each source file
 ```
 
 ### 2. Replace Serial.print Calls
@@ -34,12 +36,12 @@ Conditional compilation system for debug output. Set `DEBUG_MASTER 0` for RELEAS
 
 ### 3. Build Configuration
 
-**For DEVELOPMENT** (in `src/debug.h`):
+**For DEVELOPMENT** (in `src/debug_config.h`):
 ```cpp
 #define DEBUG_MASTER 1  // Enable all debug
 ```
 
-**For PRODUCTION** (in `src/debug.h`):
+**For PRODUCTION** (in `src/debug_config.h`):
 ```cpp
 #define DEBUG_MASTER 0  // Disable all debug (except CRITICAL)
 ```
@@ -113,7 +115,7 @@ CRITICALLN("!!! WATCHDOG STARVED - EMERGENCY SHUTDOWN !!!");
 
 ## Category Configuration
 
-In `debug.h`, you can enable/disable specific categories:
+In `debug_config.h`, you can enable/disable specific categories:
 
 ```cpp
 #if DEBUG_MASTER
@@ -164,7 +166,7 @@ Examples:
 
 ### 1. DEBUG Build
 ```cpp
-// In debug.h:
+// In debug_config.h:
 #define DEBUG_MASTER 1
 
 // Expected output:
@@ -175,7 +177,7 @@ Examples:
 
 ### 2. RELEASE Build
 ```cpp
-// In debug.h:
+// In debug_config.h:
 #define DEBUG_MASTER 0
 
 // Expected output:
@@ -277,7 +279,7 @@ if (error) {
 **Documentation**:
 - 📖 `DEBUG_MIGRATION_GUIDE.md` - Complete migration guide
 - 📖 `DEBUG_MIGRATION_EXAMPLE.md` - Full file migration example
-- 📖 `debug.h` - Header file with all macros
+- 📖 `debug_config.h` - Header file with all macros
 
 ---
 
@@ -285,13 +287,13 @@ if (error) {
 
 **Enable RELEASE mode**:
 ```cpp
-// In src/debug.h line 7:
+// In src/debug_config.h line 7:
 #define DEBUG_MASTER 0
 ```
 
 **Enable DEBUG mode**:
 ```cpp
-// In src/debug.h line 7:
+// In src/debug_config.h line 7:
 #define DEBUG_MASTER 1
 ```
 

@@ -1,5 +1,7 @@
 # 🔍 Enhanced Debugging - Voltage Discrepancy Analysis
 
+> **Status:** notes from an early voltage-only debugging session (May 2025), kept for history. The figures here (1 ms / 1000 Hz sampling, 100-reading batches) are from that version. The current firmware reads one ADC channel every 2 ms (up to 250 readings/s per channel) with a 50-row buffer written to the SD card.
+
 ## **🎯 What I Added**
 
 ### **1. Live vs Buffered Comparison**

@@ -1,5 +1,7 @@
 # 🔥 Heater Control Modification Plan
 
+> **Status:** original plan (May 2025), kept for history. What was built differs: temperature comes from a 100k NTC thermistor on mux channel 1 (not DS18B20/DHT22/thermocouple), the relay was replaced by AOD4144 MOSFET PWM, logs go to an SD card, there is no auto-tuning, and the defaults are 45 °C target, 130 °C max, 30 min limit, Kp/Ki/Kd = 2.2/0.25/0.15 every 500 ms. Current values: README.md and config.h.
+
 ## **📋 Project Enhancement Overview**
 
 **Current State**: ESP8266 Voltage Logger with paused start functionality  

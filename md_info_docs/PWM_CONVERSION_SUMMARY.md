@@ -1,12 +1,14 @@
 # PWM Heater Control Conversion Summary
 
+> **Status:** change notes from the relay → PWM conversion (SD_pwm_edition, Dec 2025). The conversion is in the current firmware, but some values have changed since: the PWM frequency is **32 Hz** (not 10 Hz), and 3.3 V gate drive turns the AOD4144 on but not fully (see MOSFET_GATE_DRIVE_NOTES.md). Current values: README.md and config.h.
+
 ## Overview
 The heater control system has been upgraded from simple relay on/off control to smooth PWM (Pulse Width Modulation) control using an AOD4144 N-channel MOSFET. This provides much better temperature regulation and eliminates the need for hysteresis logic.
 
 ## Hardware Setup
 - **MOSFET**: AOD4144 N-channel
 - **Control Pin**: GPIO16 (D0) - same pin as before
-- **PWM Frequency**: 10 Hz (ideal for heater control)
+- **PWM Frequency**: 32 Hz (originally 10 Hz)
 - **PWM Range**: 0-1000 (0.1% resolution)
 - **Gate Drive**: ESP8266 3.3V GPIO → MOSFET gate
 - **Load**: 12V heater supply switched by MOSFET
@@ -22,7 +24,7 @@ The heater control system has been upgraded from simple relay on/off control to 
 
 #### New PWM Configuration:
 ```cpp
-const int PWM_FREQUENCY = 10;  // 10 Hz
+const int PWM_FREQUENCY = 32;  // 32 Hz (was 10 Hz in the first PWM version)
 const int PWM_RANGE = 1000;    // 0.1% resolution
 ```
 
@@ -47,10 +49,10 @@ const int PWM_RANGE = 1000;    // 0.1% resolution
 #### `checkHeaterSafety()`:
 - Now checks `heaterDutyCycle > 0` instead of `relayState`
 - Shuts down by setting PWM to 0 instead of digital LOW
-- Added continuous runtime check (10 minute safety timeout)
+- Added continuous runtime check (10 minute safety timeout at the time; now 30 minutes)
 
 #### Safety Features Maintained:
-- Over-temperature shutdown (>120°C)
+- Over-temperature shutdown (>120°C at the time; now >130°C)
 - Sensor failure detection
 - Maximum runtime protection
 - Emergency shutdown system
@@ -101,7 +103,7 @@ const int PWM_RANGE = 1000;    // 0.1% resolution
 - MOSFET handles switching smoothly
 
 ### 4. **Improved Efficiency**
-- Lower frequency (10 Hz) reduces switching losses
+- Low frequency (32 Hz) reduces switching losses
 - Better average power delivery
 - Reduced EMI compared to kHz switching
 
@@ -145,8 +147,9 @@ With PWM control, you can now use more aggressive PID parameters:
 ### MOSFET Gate Drive:
 - ESP8266 GPIO: 3.3V logic level
 - AOD4144 Vgs(th): 2-3V typical
-- 3.3V is sufficient for full enhancement
-- No additional gate driver needed
+- 3.3V turns it on, but not fully: Rds(on) is rated at 4.5V gate drive
+- Fine for moderate heater currents; for high currents add a gate driver (e.g. TC4420), see MOSFET_GATE_DRIVE_NOTES.md
+- 10kΩ pull-down from gate to GND keeps the heater off during boot/reset
 
 ### Power Circuit:
 - MOSFET Source: Ground

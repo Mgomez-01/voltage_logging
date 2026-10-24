@@ -1,5 +1,9 @@
 # Debug System Migration Guide
 
+> **Status: planned, not done yet.** `src/debug_config.h` exists, but no source file includes it. The firmware still uses direct `Serial.print()` calls with per-file `DEBUG_*` flags in `main.cpp`, `heater_controller.cpp` and `web_interface.cpp`.
+>
+> The header was originally `src/debug.h`. It was renamed because the ESP8266 core has its own `debug.h`, and a project file with that name replaces it and breaks the build.
+
 ## Overview
 
 This guide shows how to migrate from direct `Serial.print()` calls to the new conditional debug system. This allows you to create RELEASE builds with zero debug overhead.
@@ -10,7 +14,7 @@ This guide shows how to migrate from direct `Serial.print()` calls to the new co
 
 ### For RELEASE Build (Production):
 
-In `src/debug.h` line 7:
+In `src/debug_config.h` line 7:
 ```cpp
 #define DEBUG_MASTER 0  // Disables ALL debug output
 ```
@@ -409,14 +413,14 @@ void writeBufferToFile() {
 
 ### Test 1: DEBUG Build
 
-1. Set `DEBUG_MASTER 1` in debug.h
+1. Set `DEBUG_MASTER 1` in debug_config.h
 2. Upload
 3. Open serial monitor
 4. You should see ALL debug messages
 
 ### Test 2: RELEASE Build
 
-1. Set `DEBUG_MASTER 0` in debug.h
+1. Set `DEBUG_MASTER 0` in debug_config.h
 2. Upload
 3. Open serial monitor
 4. You should see:
@@ -558,7 +562,7 @@ Replace: FILE_PRINTLN("Wrote
 
 ### Migration Steps:
 
-1. ✅ Add `#include "debug.h"` to each source file
+1. ✅ Add `#include "debug_config.h"` to each source file
 2. ✅ Replace `Serial.print()` with appropriate macro
 3. ✅ Keep CRITICAL for errors/warnings/emergencies
 4. ✅ Use category-specific macros for debug messages

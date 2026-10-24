@@ -1,5 +1,7 @@
 # Gemini Updates: SD Card Logging Implementation
 
+> **Status:** change notes from the LittleFS → SD card move (SD_card_edition, Oct-Nov 2025). Still accurate for the SD card wiring and the log-file routes. Added since: 50 MB file rotation, SD write timeouts, `/data.csv` without `?file=` downloads the current log file, and Start Logging retries the SD setup if no log file was created at boot.
+
 This document outlines the changes made to the project to implement SD card logging functionality.
 
 ## Summary of Changes

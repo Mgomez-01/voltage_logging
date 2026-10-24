@@ -1,5 +1,7 @@
 # System Reset Buffer Fix - Stale Temperature Issue
 
+> **Status:** implemented in the current firmware (`handleSystemReset()` in `src/web_interface.cpp`; Jan 2026).
+
 ## Problem Identified
 
 After clicking "System Reset", the system immediately triggered another emergency shutdown due to reading a **stale temperature value** from the data buffer.
