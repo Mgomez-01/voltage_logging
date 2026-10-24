@@ -1,15 +1,19 @@
-# Makefile for ESP8266 Voltage Logger
+# Makefile for ESP8266 Voltage + Temperature Logger (SD card + PWM heater)
 # Requires PlatformIO to be installed
+#
+# Board environment (from platformio.ini): esp8266 (NodeMCU, default),
+# wemos_d1_mini, or esp12e. Override with e.g. `make deploy ENV=wemos_d1_mini`.
+ENV ?= esp8266
 
-.PHONY: build upload monitor clean install help
+.PHONY: build upload monitor clean install help filesystem deploy
 
 # Default target
 all: build
 
-# Build the project (try different environments if one fails)
+# Build the project for the selected board
 build:
-	@echo "Building ESP8266 Voltage Logger..."
-	pio run -e esp8266 || pio run -e esp12e || pio run -e wemos_d1_mini
+	@echo "Building ESP8266 Voltage Logger for $(ENV)..."
+	pio run -e $(ENV)
 
 # Try specific board environments
 build-nodemcu:
@@ -26,15 +30,15 @@ build-wemos:
 
 # Upload to ESP8266
 upload: build
-	@echo "Uploading to ESP8266..."
-	pio run --target upload
+	@echo "Uploading firmware to ESP8266 ($(ENV))..."
+	pio run -e $(ENV) --target upload
 
 # Monitor serial output
 monitor:
 	@echo "Starting serial monitor (Ctrl+C to exit)..."
 	pio device monitor --baud 115200
 
-# Build, upload filesystem, upload firmware, and monitor in one command
+# Build, upload firmware, upload web page (LittleFS), and monitor in one command
 deploy: upload filesystem
 	@echo "Deployment complete (firmware + filesystem), starting monitor..."
 	@sleep 2
@@ -43,7 +47,7 @@ deploy: upload filesystem
 # Clean build files
 clean:
 	@echo "Cleaning build files..."
-	pio run --target clean
+	pio run -e $(ENV) --target clean
 
 # Install/update dependencies
 install:
@@ -65,15 +69,16 @@ info:
 	@echo "Project Information:"
 	pio project config
 
-# Flash filesystem (SPIFFS/LittleFS)
+# Upload the web page template (data/) to internal flash (LittleFS).
+# Sensor logs go to the SD card, not here.
 filesystem:
-	@echo "Uploading filesystem..."
-	pio run --target uploadfs
+	@echo "Uploading web page to LittleFS ($(ENV))..."
+	pio run -e $(ENV) --target uploadfs
 
 # Generate compile_commands.json for language servers
 compile-db:
 	@echo "Generating compile commands database..."
-	pio run --target compiledb || echo "Manual compile_commands.json generation needed"
+	pio run -e $(ENV) --target compiledb || echo "Manual compile_commands.json generation needed"
 	@echo "Language server database updated"
 
 # Setup language server configuration
@@ -108,19 +113,21 @@ fix-platform:
 help:
 	@echo "ESP8266 Voltage Logger - Available targets:"
 	@echo ""
-	@echo "  build         - Compile the project (auto-detect board)"
+	@echo "  Board: ENV=$(ENV) (override: make <target> ENV=wemos_d1_mini | esp12e)"
+	@echo ""
+	@echo "  build         - Compile the firmware for ENV"
 	@echo "  build-nodemcu - Build for NodeMCU specifically"
 	@echo "  build-esp12e  - Build for ESP12E specifically"
 	@echo "  build-wemos   - Build for Wemos D1 Mini specifically"
-	@echo "  upload        - Upload to ESP8266"  
+	@echo "  upload        - Upload firmware to ESP8266"
 	@echo "  monitor       - Start serial monitor"
-	@echo "  deploy        - Build, upload firmware + filesystem, and monitor"
+	@echo "  deploy        - Build, upload firmware + web page, and monitor"
 	@echo "  clean         - Clean build files"
 	@echo "  install       - Install dependencies"
 	@echo "  update        - Update libraries"
 	@echo "  devices       - List connected devices"
 	@echo "  info          - Show project information"
-	@echo "  filesystem    - Upload filesystem"
+	@echo "  filesystem    - Upload web page template to LittleFS"
 	@echo "  compile-db    - Generate compile_commands.json for language servers"
 	@echo "  setup-lsp     - Setup language server configuration"
 	@echo "  troubleshoot  - Run diagnostics"
@@ -130,11 +137,11 @@ help:
 	@echo "Quick start:"
 	@echo "  make fix-platform  # Fix platform issues first"
 	@echo "  make setup-lsp     # Setup language server (fixes A0 errors)"
-	@echo "  make deploy        # Build, upload firmware + filesystem, and monitor"
+	@echo "  make deploy        # Build, upload firmware + web page, and monitor"
 	@echo ""
 	@echo "If build fails:"
 	@echo "  make troubleshoot  # Check what's wrong"
-	@echo "  make build-nodemcu # Try specific board"
+	@echo "  make build-wemos   # Try another board environment"
 	@echo ""
 	@echo "For IDE/Editor issues:"
 	@echo "  make setup-lsp     # Fix language server A0 undefined errors"
