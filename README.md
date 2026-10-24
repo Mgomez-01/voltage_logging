@@ -106,21 +106,34 @@ Sensor data is never stored in internal flash.
 Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... When a file reaches 50 MB, logging continues in the next free name. The files are CSV text:
 
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output
-120004,0.822266,43.812,1,45.00,31.47
-120008,0.823242,43.815,1,45.00,31.47
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
+120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150
+120008,0.823242,25.088,1,45.00,18.40,843,511,1.6468,1,2.200,0.250,0.150
 ```
 
-| Column | Unit | Description |
-|---|---|---|
-| timestamp | ms | `millis()` since boot, taken at the thermistor sample |
-| voltage | V | Channel 0, ADC/1024 (6 decimals) |
-| temperature | °C | Channel 1 thermistor (3 decimals, -999 = open/short) |
-| heater_state | 0/1 | 1 if heater PWM duty > 0 |
-| target_temp | °C | PID setpoint |
-| pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
+| # | Column | Unit | Description |
+|---|---|---|---|
+| 1 | timestamp | ms | `millis()` since boot, taken at the thermistor sample |
+| 2 | voltage | V | Channel 0, `voltage_adc`/1024 (6 decimals) |
+| 3 | temperature | °C | Channel 1 thermistor (3 decimals, -999 = open/short) |
+| 4 | heater_state | 0/1 | 1 if heater PWM duty > 0 |
+| 5 | target_temp | °C | PID setpoint |
+| 6 | pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
+| 7 | voltage_adc | counts | Raw ADC reading for channel 0 (0-1023) |
+| 8 | thermistor_adc | counts | Raw ADC reading for channel 1 (0-1023) |
+| 9 | thermistor_v | V | Thermistor divider voltage, `thermistor_adc`/1024 × 3.3 (4 decimals). This is the exact value the temperature is calculated from. |
+| 10 | pid_enabled | 0/1 | 1 if the PID was controlling the heater, 0 for manual ON/OFF. Tells PID-at-100% apart from manual ON. |
+| 11 | kp | - | PID proportional gain in effect (3 decimals) |
+| 12 | ki | - | PID integral gain in effect |
+| 13 | kd | - | PID derivative gain in effect |
 
-At the maximum rate this is about 38 bytes × 250 rows/s ≈ 34 MB per hour, so a new 50 MB file starts about every 1.5 hours.
+Columns 1-6 are the original format. Columns 7-13 were added after them, so scripts that read by column name keep working.
+
+**Checking the temperature:** with the 100 kΩ series resistor, R = 100000 × V / (3.3 − V) and 1/T = 1/298.15 + ln(R/100000)/3950 (T in kelvin), using V = `thermistor_v`. That reproduces `temperature` to within ~0.003 °C. The raw counts let you redo the conversion with a different calibration or ADC scaling.
+
+**Gains:** the kp/ki/kd columns hold the gains when the row was sampled. Changing them with `/pid/params` saves the buffered rows first, so rows never show gains they weren't sampled under. The serial monitor warns if that save fails.
+
+At the maximum rate this is about 73 bytes × 250 rows/s ≈ 66 MB per hour, so a new 50 MB file starts about every 45 minutes.
 
 ## Technical Details
 
@@ -134,7 +147,7 @@ At the maximum rate this is about 38 bytes × 250 rows/s ≈ 34 MB per hour, so 
 ### SD card writes
 - Each write opens the file, checks its size (rotating at 50 MB), appends the buffered rows and closes the file
 - A write is abandoned after 5 s. The watchdog is fed every 5 rows so slow cards don't trip it.
-- Slow cards are reported in the serial monitor (> 1 s open/close, > 2 s total). See [SD_WRITE_TIMEOUT_FIX.md](SD_WRITE_TIMEOUT_FIX.md).
+- Slow cards are reported in the serial monitor (> 1 s open/close, > 2 s total). See [SD_WRITE_TIMEOUT_FIX.md](md_info_docs/SD_WRITE_TIMEOUT_FIX.md).
 
 ### Heater / PID
 | Setting | Value |
@@ -156,14 +169,14 @@ The PID uses the latest logged temperature, or reads the thermistor directly whe
 - Software watchdog (checked every 8 s) + ESP hardware watchdog
 - Logging auto-stops when free heap < 8 KB
 - On shutdown the heater PWM goes to 0, PID and logging stop, and any open log file is closed
-- After a shutdown, use **System Reset** (`/system/reset`). It is refused if the temperature is ≥ 120 °C or the sensor is faulty. It also clears the RAM buffer so old readings can't re-trigger a shutdown. See [RESET_BUFFER_FIX.md](RESET_BUFFER_FIX.md).
+- After a shutdown, use **System Reset** (`/system/reset`). It is refused if the temperature is ≥ 120 °C or the sensor is faulty. It also clears the RAM buffer so old readings can't re-trigger a shutdown. See [RESET_BUFFER_FIX.md](md_info_docs/RESET_BUFFER_FIX.md).
 
 ### Network / API
 | Route | Action |
 |---|---|
 | `/` | Web page |
 | `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
-| `/status` | One-shot JSON reading and settings |
+| `/status` | One-shot JSON reading and settings (includes raw ADC counts and `thermistorVoltage`) |
 | `/logs` | JSON list of log files `{name, size}` |
 | `/data.csv` | Download the current log file (flushes the RAM buffer first) |
 | `/data.csv?file=<name>` | Download a specific log file |
@@ -189,7 +202,7 @@ src/
 ├── safety_system.*        # Ticker safety check, watchdog, emergency shutdown
 ├── web_interface.*        # HTTP routes, WebSocket, page templating
 ├── wifi_manager.*         # access point
-└── debug_config.h         # centralized debug macros (not used yet, see DEBUG_MIGRATION_GUIDE.md)
+└── debug_config.h         # centralized debug macros (not used yet, see md_info_docs/DEBUG_MIGRATION_GUIDE.md)
 data/
 └── index.template.html    # web page (uploaded to LittleFS)
 config.h                   # reference of key settings (not compiled in)
@@ -220,13 +233,13 @@ Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_inter
 ### Temperature reads N/A or -999
 - Check the thermistor divider on C1 (~1.65 V at room temperature)
 
-For PlatformIO install/build problems, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+For PlatformIO install/build problems, see [TROUBLESHOOTING.md](md_info_docs/TROUBLESHOOTING.md).
 
 ## Notes
 
-- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.3 V, so the logged value is the actual voltage ÷ 3.3. The thermistor conversion already assumes 0-3.3 V.
+- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.3 V, so the logged value is the actual voltage ÷ 3.3. The thermistor conversion already assumes 0-3.3 V. Because `voltage_adc` is logged, the actual voltage can be recovered afterwards (`voltage_adc` / 1024 × 3.3 on those boards).
 - Timestamps restart at 0 on each boot. Each boot also starts a new log file.
-- Several `.md` files are change notes from earlier versions (relay control, internal-flash logging). Each starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current firmware.
+- Further guides and change notes from earlier versions (relay control, internal-flash logging) are in `md_info_docs/`. Each change note starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current firmware.
 
 ## License
 

@@ -1,6 +1,6 @@
 # PlatformIO Troubleshooting
 
-This page covers installing and building. For runtime problems (SD card, heater, sensors), see the Troubleshooting sections in [README.md](README.md) and [WIRING_GUIDE.md](WIRING_GUIDE.md).
+This page covers installing and building. For runtime problems (SD card, heater, sensors), see the Troubleshooting sections in [README.md](../README.md) and [WIRING_GUIDE.md](../WIRING_GUIDE.md).
 
 ## "Detected unknown package 'espressif8266'"
 

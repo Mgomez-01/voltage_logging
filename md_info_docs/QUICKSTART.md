@@ -13,7 +13,7 @@ The ESP8266 platform and the ArduinoJson / WebSockets libraries download automat
 - microSD module: SCK→D5, MISO→D6, MOSI→D7, CS→D8, VCC 3.3 V, GND
 - Heater (optional): D0 → AOD4144 gate (10 kΩ gate→GND), 12 V heater on the drain, common ground
 
-Full details: [WIRING_GUIDE.md](WIRING_GUIDE.md)
+Full details: [WIRING_GUIDE.md](../WIRING_GUIDE.md)
 
 ## 3. Upload firmware and web page
 ```bash

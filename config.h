@@ -56,7 +56,15 @@
 //   BUFFER_SIZE   = 50 rows        RAM buffer before each SD write
 //   MAX_FILE_SIZE = 50000000 bytes Rotate to a new file at 50 MB
 //   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
-//   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output
+//   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output,
+//                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
+//                   (CSV_HEADER in data_manager.cpp; ~73 bytes per row)
+//     voltage_adc / thermistor_adc = raw ADC counts (0-1023)
+//     thermistor_v = thermistor_adc / 1024 * 3.3, the voltage the temperature
+//                    is calculated from (thermistorAdcToVoltage())
+//     pid_enabled  = 1 if the PID was controlling the heater
+//     kp, ki, kd   = gains in effect; /pid/params flushes the buffer before
+//                    changing them
 //   MAX_WRITE_TIME = 5000 ms       A single SD write is abandoned after 5 s;
 //                                  the watchdog is fed every 5 rows
 //   If the SD card is not ready at boot, no log file is created. /start
@@ -107,4 +115,4 @@
 //   Baud rate = 115200
 //   DEBUG_* flags are set per file (main.cpp, heater_controller.cpp,
 //   web_interface.cpp). src/debug_config.h holds centralized macros but is not
-//   included yet (see DEBUG_MIGRATION_GUIDE.md).
+//   included yet (see md_info_docs/DEBUG_MIGRATION_GUIDE.md).

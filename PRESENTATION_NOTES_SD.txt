@@ -1,0 +1,344 @@
+===============================================================================
+ ESP8266 VOLTAGE + TEMPERATURE LOGGER WITH SD CARD AND PWM HEATER CONTROL
+ PRESENTATION NOTES
+===============================================================================
+Branch reviewed: better_memory_management  (commit d026e2f, 2026-01-07)
+  - This is the newest firmware branch and the one checked out on your
+    computer. Your local copy matches GitHub exactly.
+  - Branch lineage: main -> heater_pid -> html_fix -> refactor
+                    -> SD_card_edition (Oct-Nov 2025: LittleFS -> SD card)
+                    -> SD_pwm_edition  (Dec 2025: relay -> MOSFET PWM)
+                    -> better_memory_management (Dec 2025-Jan 2026: memory,
+                       reset button, SD write-timeout/watchdog fixes)
+  - multiheater_html has a newer date but only changes the web page
+    template. It has no SD code.
+  - The previous notes described the old LittleFS/relay code from html_fix.
+    This file replaces them.
+
+Files reviewed: src/main.cpp, sensor_manager.*, data_manager.*,
+  heater_controller.*, safety_system.*, web_interface.*, wifi_manager.*,
+  platformio.ini, data/index.template.html, MOSFET_GATE_DRIVE_NOTES.md,
+  PWM_CONVERSION_SUMMARY.md, SD_WRITE_TIMEOUT_FIX.md, gemini-updates.md.
+  Plus your commit b2cd9a5 (made and then reset today, see section 9).
+
+
+1. SYSTEM OVERVIEW
+-------------------------------------------------------------------------------
+The ESP8266 reads two analog signals (a voltage and a 100k NTC thermistor)
+through a CD74HC4067 multiplexer. It logs them as CSV to a microSD card and
+regulates a 12 V heater with a PID controller that drives an AOD4144 MOSFET
+using PWM. The board creates its own WiFi network. A web page (served from
+internal flash) shows live data and has buttons to start/stop logging, manage
+the SD log files, control the heater, tune the PID and reset after a fault.
+
+Signal chain:
+  Voltage source  --> MUX C0 --\
+                                >-- MUX COM --> ESP8266 A0 (10-bit ADC)
+  Thermistor div. --> MUX C1 --/
+  ESP8266 SPI (D5-D8) <------> microSD module      (data logs)
+  ESP8266 GPIO16 (PWM) --> AOD4144 gate --> 12 V heater (low-side switch)
+
+Storage split:
+  microSD card ............... ALL sensor data logs (data*.log)
+  Internal flash (LittleFS) .. ONLY the web page (index.template.html)
+
+
+2. MICROCONTROLLER / BUILD SETUP
+-------------------------------------------------------------------------------
+MCU ................ ESP8266 (ESP-12E/F module), 80 MHz, 4 MB flash
+Board .............. NodeMCU v2 (env esp8266) or Wemos D1 mini (env wemos_d1_mini)
+Framework .......... Arduino on PlatformIO (platform espressif8266)
+Serial ............. 115200 baud (status print every 1 s)
+Upload ............. 921600 baud (NodeMCU), 460800 baud via esptool (D1 mini)
+Build flags ........ LWIP2_LOW_MEMORY, VTABLES_IN_FLASH,
+                     MMU_IRAM_SIZE=0x8000, MMU_ICACHE_SIZE=0x8000
+Libraries .......... Core: ESP8266WiFi, ESP8266WebServer, SD, SPI, LittleFS, Ticker
+                     External: ArduinoJson ^7.0.0, WebSockets ^2.4.0
+Flash steps ........ pio run -e <env> -t upload     (firmware)
+                     pio run -e <env> -t uploadfs   (web page into LittleFS)
+
+Code layout (refactored into modules):
+  main.cpp ............... setup/loop, sampling, debug stats, low-heap guard
+  sensor_manager ......... mux control, thermistor conversion
+  data_manager ........... RAM buffer, SD card, file naming/rotation
+  heater_controller ...... PWM output, PID, heater safety checks
+  safety_system .......... Ticker safety check, watchdog, emergency shutdown
+  web_interface .......... HTTP routes, WebSocket, page templating
+  wifi_manager ........... access point
+
+Boot sequence (setup()):
+  1. Serial 115200, 1 s wait
+  2. Mux select pins -> outputs, channel 0
+  3. Heater PWM init: analogWriteFreq(32), analogWriteRange(1000), duty 0
+  4. Self-test read of channel 0 and channel 1
+  5. Mount LittleFS (web page)
+  6. Start WiFi access point
+  7. HTTP server (port 80) and WebSocket server (port 81)
+  8. SD.begin(SS) -> pick the next free file name -> write the CSV header
+  9. Safety system: HW watchdog, 500 ms safety ticker, 8 s watchdog ticker
+  -> Logging starts PAUSED. The heater starts OFF.
+
+Network:
+  WiFi mode ...... Access Point
+  SSID ........... ESP8266_VoltageLogger
+  Password ....... voltage123
+  IP ............. 192.168.4.1
+  HTTP ........... port 80     WebSocket ... port 81
+
+
+3. PIN MAP
+-------------------------------------------------------------------------------
+Label  GPIO    Connected to            Function
+-----  ------  ----------------------  -----------------------------------------
+A0     ADC     CD74HC4067 COM          Analog input (both sensors)
+D0     GPIO16  AOD4144 gate            Heater PWM (10k pull-down gate->GND)
+D1     GPIO5   CD74HC4067 S0           Mux select bit 0
+D2     GPIO4   CD74HC4067 S1           Mux select bit 1
+D3     GPIO0   CD74HC4067 S2           Mux select bit 2   (boot pin: must be HIGH)
+D4     GPIO2   CD74HC4067 S3           Mux select bit 3   (boot pin: HIGH, LED)
+D5     GPIO14  SD module SCK           SPI clock
+D6     GPIO12  SD module MISO          SPI data in
+D7     GPIO13  SD module MOSI          SPI data out
+D8     GPIO15  SD module CS            SPI chip select (SS) (boot pin: must be LOW)
+3V3    -       Mux VCC+EN, SD VCC, thermistor divider top
+GND    -       Mux, SD, thermistor, MOSFET source, 12 V supply ground (common)
+
+All usable GPIOs are in use. Only RX/TX are free.
+
+Mux channels: C0 = voltage, C1 = thermistor, C2-C15 free.
+
+
+4. PERIPHERALS / HARDWARE
+-------------------------------------------------------------------------------
+a) CD74HC4067 16-channel analog multiplexer
+   - 3.3 V supply, ~70 ohm on-resistance, EN tied active
+   - Firmware waits 10 us after switching + 50 us settling before each read
+
+b) Thermistor (channel C1)
+   - 100 k NTC, Beta = 3950 K (same type as the Creality Ender 3)
+   - R25 = 100,000 ohm; series resistor = 100,000 ohm to 3.3 V
+   - Wiring: 3.3V -- [100k] -- C1 -- [NTC] -- GND
+   - Conversion (Beta equation):
+       V = ADC/1024 * 3.3
+       R = 100k * V / (3.3 - V)
+       1/T = 1/298.15 + ln(R/100k)/3950     T(C) = T(K) - 273.15
+   - Error value -999 if ADC <= 1 (short) or V >= 3.29 V (open)
+
+c) Voltage channel (C0)
+   - voltage = ADC / 1024 (0-1 V scale, 10-bit, ~1 mV per step)
+
+d) microSD card module
+   - SPI at 3.3 V, CS = D8/GPIO15, initialized with SD.begin(SS)
+   - Card: FAT32 (or FAT16 for <= 2 GB). Class 10 or faster recommended
+     (SD_WRITE_TIMEOUT_FIX.md: slow cards caused watchdog trips).
+   - A Wemos D1 mini micro-SD shield uses the same pins.
+   - [Fill in: card brand/size and module used on your board]
+
+e) Heater driver: AOD4144 N-channel logic-level MOSFET
+   - Low-side switch: +12 V -> heater -> drain; source -> GND
+   - Gate driven directly from GPIO16 (3.3 V), 10 k pull-down keeps the
+     heater off during boot/reset
+   - Vgs(th) 2-3 V, so 3.3 V turns it on but not fully (Rds(on) is rated
+     at 4.5 V). Optional TC4420 gate driver for high currents.
+   - 12 V supply ground tied to ESP8266 ground; fuse the heater supply
+
+f) WiFi radio (built in): access point for the web UI
+
+
+5. SAMPLING / TIMING
+-------------------------------------------------------------------------------
+Parameter               Value       Meaning
+----------------------  ----------  ---------------------------------------------
+SAMPLE_INTERVAL         2 ms        One ADC read every 2 ms, alternating C0/C1
+Per-channel rate        250 Hz max  Each channel read every 4 ms
+CSV row rate            250 rows/s  One row per C0+C1 pair (theoretical max)
+Mux settle              10 + 50 us  Before each analogRead
+BUFFER_SIZE (window)    50 rows     RAM buffer, written to SD when full
+                                    (~every 200 ms at the full rate). Reduced
+                                    from 100 to save ~1.4 KB of RAM.
+WEB_UPDATE_INTERVAL     500 ms      Latest row pushed over WebSocket (2 Hz),
+                                    slowed from 100 ms to save memory
+PID_INTERVAL            500 ms      PID recomputed twice per second
+DEBUG_INTERVAL          1000 ms     Serial status print
+Low-heap guard          < 8000 B    Free heap below this auto-stops logging
+                                    and flushes the buffer
+
+Real rates are lower than the maximums: sampling pauses during each SD write
+(open, size check, write 50 rows, close) and during the 1 s debug print
+(~10 ms of mux reads). The older docs' "500 Hz per sensor / 1000 Hz total"
+figure is not what the code does.
+
+
+6. TEMPERATURE CONTROL (PWM + PID)
+-------------------------------------------------------------------------------
+PWM output:
+  Pin ................. GPIO16 (D0) -> AOD4144 gate
+  Frequency ........... 32 Hz requested (analogWriteFreq(32)), see section 9
+  Resolution .......... analogWriteRange(1000) -> 0.1 % steps
+  Mapping ............. duty % -> PWM value = duty/100 * 1000
+
+Setpoint / limits:
+  Default target temp ......... 45.0 C
+  Settable range .............. 0 to 130 C  (GET /temp/set?temp=<value>)
+  MAX_SAFE_TEMPERATURE ........ 130.0 C  -> emergency shutdown
+  Sensor-fault window ......... < -50 C or > 200 C while heater is on -> shutdown
+  MAX_HEATER_TIME ............. 1,800,000 ms = 30 min continuous heating -> shutdown
+  Reset allowed below ......... 120 C (MAX_SAFE_TEMPERATURE - 10) and only
+                                with a valid sensor reading
+
+PID gains (defaults; comment in code: "tested and work well at 50 C"):
+  Kp = 2.2      Ki = 0.25      Kd = 0.15
+  Changeable at runtime: GET /pid/params?kp=&ki=&kd=  (resets the integral)
+
+Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
+  temp       = latest buffered reading, or a direct sensor read if the
+               buffer is empty (so the PID works with logging OFF)
+  skip update if temp is invalid (< -50, > 200, NaN)
+  error      = target - temp
+  P          = Kp * error
+  integral  += error * 0.5,   clamped to [-100, +100]
+  I          = Ki * integral                     (max +/-25 % of output)
+  D          = Kd * (error - last_error) / 0.5
+  output     = P + I + D, clamped to 0..100 %
+  heater PWM duty = output   (continuous, no on/off threshold)
+
+How it behaves (for slides):
+  - The PID now sets the heater power continuously (0-100 %) instead of
+    switching a relay on/off, so the temperature is smoother.
+  - The P term alone reaches 100 % when the error is above ~45 C, so a cold
+    start heats at full power and then tapers off near the target.
+  - The integral can contribute at most 25 %. If holding the target needs
+    more than ~25 % power, the temperature settles slightly below the target
+    by about (needed % - 25) / 2.2 degrees.
+  - D acts on the error, so changing the setpoint causes a one-step kick.
+  - The PID runs whether or not logging is on.
+
+Manual control: /relay/on = 100 % PWM (disables PID); /relay/off = 0 %.
+  (The route names are left over from the relay version.)
+
+Safety layers:
+  1. Ticker every 500 ms: heater on for more than 30 min straight -> PWM 0,
+     shutdown
+  2. Main loop: over-temp (> 130 C) and sensor fault -> shutdown
+  3. Main loop: safety ticker hasn't run for 1.5 s -> shutdown
+  4. Software watchdog ticker (8 s): loop stalled -> PWM 0, shutdown
+     (8 s leaves room for slow SD writes)
+  5. ESP8266 hardware watchdog as a backup
+  6. SD writes limited to 5 s with frequent watchdog feeding
+  Shutdown latches: PWM 0, PID off, logging off, open file closed.
+  Recover with the "System Reset" button (GET /system/reset): no reboot
+  needed, but it is refused if the temperature is >= 120 C or the sensor is
+  invalid. It also clears the buffer so old readings can't re-trigger.
+
+
+7. DATA SAVING (SD CARD)
+-------------------------------------------------------------------------------
+Medium ............... microSD card over SPI (FAT32/FAT16)
+File names ........... data.log, data_1.log, data_2.log, ...
+                       A NEW file is created at every boot (next free number)
+File rotation ........ When the current file reaches 50 MB (MAX_FILE_SIZE =
+                       50,000,000 B), a new data_N.log is started with a header
+Header ............... timestamp,voltage,temperature,heater_state,target_temp,pid_output
+Write strategy ....... 50-row RAM buffer -> open file, append 50 rows, close.
+                       Also flushed on Stop Logging and on low-heap auto-stop.
+Write protection ..... 5 s max per write; watchdog fed every 5 rows; skips a
+                       batch if a write is already in progress; warns about
+                       slow cards (> 1 s open/close, > 2 s total)
+Persistence .......... Data on the card survives power loss (except up to 50
+                       rows still in RAM)
+
+CSV columns:
++---+--------------+-------+------------+---------------------------------------+
+| # | Column       | Unit  | Format     | Description                           |
++---+--------------+-------+------------+---------------------------------------+
+| 1 | timestamp    | ms    | integer    | millis() since boot when the C1       |
+|   |              |       |            | (thermistor) sample was taken         |
+| 2 | voltage      | V     | 6 decimals | Channel 0, ADC/1024 (0-1 V scale)     |
+| 3 | temperature  | deg C | 3 decimals | Channel 1 thermistor                  |
+|   |              |       |            | (-999 = open/short sensor)            |
+| 4 | heater_state | 0/1   | integer    | 1 if heater PWM duty > 0 %            |
+| 5 | target_temp  | deg C | 2 decimals | PID setpoint at sample time           |
+| 6 | pid_output   | %     | 2 decimals | Actual heater PWM duty, 0-100 (= PID  |
+|   |              |       |            | output under PID, 100 in manual ON)   |
++---+--------------+-------+------------+---------------------------------------+
+
+Example rows:
+  timestamp,voltage,temperature,heater_state,target_temp,pid_output
+  120004,0.822266,44.812,1,45.00,18.40
+  120008,0.823242,44.815,1,45.00,18.40
+
+Data volume (theoretical maximum rate):
+  ~38 bytes/row x 250 rows/s = ~9.5 KB/s = ~34 MB/hour
+  -> a new 50 MB file about every 1.5 h; an 8 GB card holds ~230 h
+  (Real rate is lower, see section 5. Timestamps restart at 0 in each
+   boot's file, so files don't mix runs.)
+
+Web/HTTP access to the logs:
+  /logs ..................... JSON list of data*.log files with sizes
+  /data.csv?file=<name> ..... download a log file
+  /logs/delete?file=<name> .. delete one log file
+  /clear .................... delete ALL data*.log files and start a new one
+
+Live data (WebSocket, every 500 ms):
+  type="reading", timestamp, voltage, temperature, heaterState, targetTemp,
+  pidOutput (= duty %), loggingEnabled
+
+Other routes: / (page), /status, /start, /stop, /relay/on, /relay/off,
+  /temp/set, /pid/enable, /pid/disable, /pid/params, /heater/status,
+  /system/reset
+
+
+8. EVOLUTION (optional "history" slide)
+-------------------------------------------------------------------------------
+v1 (main/heater_pid/html_fix, May 2025): LittleFS internal flash, relay on
+   GPIO16, on/off PID (relay on if output > 50 %), target 65 C, max 120 C,
+   10 min limit, 100-row buffer, 1 s PID.
+v2 (SD_card_edition, Oct-Nov 2025): logs moved to the microSD card; new file
+   per boot; web log manager. Internal flash would fill in minutes.
+v3 (SD_pwm_edition, Dec 2025): relay replaced by AOD4144 MOSFET PWM;
+   continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit, 500 ms PID,
+   new gains 2.2/0.25/0.15.
+v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
+   updates, low-heap auto-stop, 50 MB file rotation, System Reset button,
+   SD write-timeout and watchdog protection.
+
+
+9. THINGS TO KNOW BEFORE PRESENTING
+-------------------------------------------------------------------------------
+1. LOST FIX (recoverable): today you committed "updating readme config, and
+   wiring guide for latest revision and fixing bug of no filename at boot"
+   (commit b2cd9a5), then reset and pulled. That commit is NOT in your
+   current files, but it still exists in your local git and applies cleanly
+   on top of the current branch:
+        git cherry-pick b2cd9a5
+   It does three things:
+     - Fixes the main "Download Data" button. Right now it requests
+       /data.csv with no file name and gets "400 Missing file parameter".
+       The fix downloads the current log file and flushes the buffer first.
+     - Rewrites README.md and WIRING_GUIDE.md for the SD + PWM hardware
+       (the branch's versions still describe the old LittleFS/relay build).
+     - Turns config.h into an accurate reference (it is not compiled).
+2. PWM frequency: the code asks for 32 Hz. The serial banner and
+   PWM_CONVERSION_SUMMARY.md say 10 Hz. The ESP8266 Arduino core documents
+   analogWriteFreq() as valid from 100 Hz, so the real frequency is probably
+   100 Hz. Check on a scope before quoting a number.
+3. Over-temperature check gap: the over-temp and sensor-fault checks use the
+   logging buffer. With logging OFF the buffer is empty and those checks are
+   skipped, even though the PID can still heat. Only the 30 min runtime limit
+   and the watchdog apply then. Keep logging on whenever the heater runs, or
+   make the safety check read the sensor directly.
+4. 30-minute limit: under PID the duty rarely drops to 0 %, so a long hold
+   counts as "continuous heating" and triggers a shutdown at 30 min.
+5. ADC scaling mismatch: on a NodeMCU/D1 mini, A0 has an onboard divider
+   (accepts 0-3.3 V). The thermistor math assumes 0-3.3 V, but the voltage
+   channel uses ADC/1024 (0-1 V), so the logged "voltage" is the real voltage
+   / 3.3 on those boards. The onboard divider also loads the thermistor
+   divider a little. Calibrate against a reference thermometer.
+6. If the SD card isn't ready at boot, no log file name is set and every
+   buffer write fails (an error is printed). Reinsert the card and reboot.
+7. Boot pins: D3/D4 must be HIGH and D8 LOW at power-up. Most SD modules
+   are fine on D8, but check if the board won't boot.
+8. On the ESP8266 the hardware watchdog timeout can't really be set, so the
+   10 s value passed to ESP.wdtEnable() is likely ignored. The software
+   watchdog ticker (8 s) is the one that matters.
+===============================================================================

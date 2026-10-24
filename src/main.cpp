@@ -189,11 +189,13 @@ void loop() {
 
 void readSensors() {
   static float lastVoltage = 0.0;
+  static int lastVoltageAdc = 0;
   static float lastTemperature = 0.0;
   if (currentSensorChannel == VOLTAGE_CHANNEL) {
     selectMuxChannel(VOLTAGE_CHANNEL);
     delayMicroseconds(50);
     int adcValue = analogRead(ADC_PIN);
+    lastVoltageAdc = adcValue;
     lastVoltage = (adcValue / 1024.0);
     currentSensorChannel = THERMISTOR_CHANNEL;
   } else {
@@ -203,9 +205,11 @@ void readSensors() {
     lastTemperature = convertThermistorToTemperature(adcValue);
     readings[bufferIndex].timestamp = millis();
     readings[bufferIndex].voltage = lastVoltage;
+    readings[bufferIndex].voltageAdc = lastVoltageAdc;
     readings[bufferIndex].temperature = lastTemperature;
-    readings[bufferIndex].currentChannel = THERMISTOR_CHANNEL;
+    readings[bufferIndex].thermistorAdc = adcValue;
     readings[bufferIndex].heaterState = (heaterDutyCycle > 0);  // Store as boolean: is heater active?
+    readings[bufferIndex].pidEnabled = pidEnabled;  // PID in control (vs manual/off)
     readings[bufferIndex].pidValue = heaterDutyCycle;  // Store actual PWM duty cycle percentage
     readings[bufferIndex].targetTemp = targetTemperature;
     totalReadings++;

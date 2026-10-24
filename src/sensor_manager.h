@@ -28,6 +28,7 @@ extern int currentSensorChannel;
 // Function declarations
 void setupMultiplexer();
 void selectMuxChannel(int channel);
+float thermistorAdcToVoltage(int adcValue);  // Divider voltage used by the conversion
 float convertThermistorToTemperature(int adcValue);
 void testSensorChannels();
 

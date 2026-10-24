@@ -268,6 +268,7 @@ void handleStatus() {
   doc["temperature"] = currentTemperature;
   doc["voltageADC"] = voltageADC;
   doc["temperatureADC"] = tempADC;
+  doc["thermistorVoltage"] = thermistorAdcToVoltage(tempADC);
   doc["type"] = "reading";
   doc["totalReadings"] = totalReadings;
   doc["connectedClients"] = webSocket.connectedClients();
@@ -376,6 +377,14 @@ void handlePIDDisable() {
 
 void handlePIDParams() {
   bool updated = false;
+  // The kp/ki/kd columns are written from the current gains when the buffer is
+  // saved, so save the rows sampled under the old gains before changing them.
+  if (server.hasArg("kp") || server.hasArg("ki") || server.hasArg("kd")) {
+    flushDataBuffer();
+    if (bufferIndex > 0 || bufferFull) {
+      Serial.println(F("WARNING: Buffer flush failed - unsaved rows will be logged with the new PID gains"));
+    }
+  }
   if (server.hasArg("kp")) { pidKp = server.arg("kp").toFloat(); updated = true; }
   if (server.hasArg("ki")) { pidKi = server.arg("ki").toFloat(); updated = true; }
   if (server.hasArg("kd")) { pidKd = server.arg("kd").toFloat(); updated = true; }

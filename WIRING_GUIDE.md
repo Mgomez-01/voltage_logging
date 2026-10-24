@@ -90,7 +90,7 @@ C2-C15  | Free for more analog sensors
 ### AOD4144 MOSFET + Heater
 - N-channel logic-level MOSFET, Vgs(th) 2-3 V
 - Gate driven directly from GPIO16 (3.3 V PWM), with a 10 kΩ pull-down so the heater stays off while the ESP8266 boots or resets
-- 3.3 V gate drive turns it on but not fully (Rds(on) is rated at 4.5 V). For high heater currents, add a gate driver such as a TC4420 powered from 5-12 V. See `MOSFET_GATE_DRIVE_NOTES.md`.
+- 3.3 V gate drive turns it on but not fully (Rds(on) is rated at 4.5 V). For high heater currents, add a gate driver such as a TC4420 powered from 5-12 V. See `md_info_docs/MOSFET_GATE_DRIVE_NOTES.md`.
 - Heater supply: 12 V. The supply ground must be tied to the ESP8266 ground.
 - Fuse the 12 V heater supply.
 
@@ -154,4 +154,4 @@ OK
 - Sampling: one ADC read every 2 ms, alternating channels, so up to 250 readings/s per channel
 - Voltage resolution: 10-bit (~1 mV per step on the 0-1 V scale)
 - Temperature: ±1 °C after calibration
-- Logging: 50-row buffer written to the SD card. A new 50 MB file about every 1.5 h at the full rate.
+- Logging: 50-row buffer written to the SD card, ~73 bytes per row (13 columns). A new 50 MB file about every 45 min at the full rate.

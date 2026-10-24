@@ -56,4 +56,4 @@ make monitor                    # serial monitor
 | One board at a time | Several environments in one file |
 
 ## Still want the Arduino IDE?
-Copy all of `src/` into a sketch folder with a matching (empty) `.ino` file, install ArduinoJson 7.x and WebSockets, and upload the `data/` folder with the LittleFS upload tool. See [libraries.txt](libraries.txt).
+Copy all of `src/` into a sketch folder with a matching (empty) `.ino` file, install ArduinoJson 7.x and WebSockets, and upload the `data/` folder with the LittleFS upload tool. See [libraries.txt](../libraries.txt).

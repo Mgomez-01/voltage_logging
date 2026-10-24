@@ -44,9 +44,16 @@ void selectMuxChannel(int channel) {
   delayMicroseconds(10);
 }
 
+// Thermistor divider voltage at C1 (0-3.3 V ADC range). Used by the
+// temperature conversion below and logged as thermistor_v, so the logged
+// voltage is exactly the one the temperature was calculated from.
+float thermistorAdcToVoltage(int adcValue) {
+  return (adcValue / 1024.0) * 3.3; // Assuming 3.3V reference
+}
+
 float convertThermistorToTemperature(int adcValue) {
   if (adcValue <= 1) return -999; // Error value for no reading (check 0 and 1)
-  float voltage = (adcValue / 1024.0) * 3.3; // Assuming 3.3V reference
+  float voltage = thermistorAdcToVoltage(adcValue);
   if (voltage >= 3.29) return -999; // Open circuit
   float resistance = SERIES_RESISTOR * voltage / (3.3 - voltage);
   if (resistance <= 0) return -999; // Avoid log(0) or log(-)

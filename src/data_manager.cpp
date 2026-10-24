@@ -1,5 +1,18 @@
 #include "data_manager.h"
 #include "safety_system.h"
+#include "heater_controller.h"  // PID gains written with each row
+#include "sensor_manager.h"     // thermistorAdcToVoltage()
+
+// CSV header. The first six columns are the original format; the rest were
+// appended so older analysis scripts that read by column name keep working.
+// Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
+const char CSV_HEADER[] PROGMEM =
+    "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
+    "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd";
+
+static void printCsvHeader(File& f) {
+  f.println(FPSTR(CSV_HEADER));
+}
 
 // File system (SD card)
 File dataFile;
@@ -101,7 +114,7 @@ void writeBufferToFile() {
                 // Create new file with header
                 File newFile = SD.open(logFileName, FILE_WRITE);
                 if (newFile) {
-                    newFile.println("timestamp,voltage,temperature,heater_state,target_temp,pid_output");
+                    printCsvHeader(newFile);
                     newFile.close();
                     feedWatchdog();  // Feed after creating new file
                     Serial.print("FILE ROTATION: Created new log file: ");
@@ -178,7 +191,22 @@ void writeBufferToFile() {
         dataFile.print(",");
         dataFile.print(readings[i].targetTemp, 2);
         dataFile.print(",");
-        dataFile.println(readings[i].pidValue, 2);
+        dataFile.print(readings[i].pidValue, 2);
+        // Columns added after the original six (see CSV_HEADER)
+        dataFile.print(",");
+        dataFile.print(readings[i].voltageAdc);
+        dataFile.print(",");
+        dataFile.print(readings[i].thermistorAdc);
+        dataFile.print(",");
+        dataFile.print(thermistorAdcToVoltage(readings[i].thermistorAdc), 4);
+        dataFile.print(",");
+        dataFile.print(readings[i].pidEnabled ? 1 : 0);
+        dataFile.print(",");
+        dataFile.print(pidKp, 3);
+        dataFile.print(",");
+        dataFile.print(pidKi, 3);
+        dataFile.print(",");
+        dataFile.println(pidKd, 3);
 
         float v = readings[i].voltage;
         float t = readings[i].temperature;
@@ -251,7 +279,7 @@ void initializeDataFile() {
     getNewLogFileName();
     dataFile = SD.open(logFileName, FILE_WRITE);
     if (dataFile) {
-      dataFile.println("timestamp,voltage,temperature,heater_state,target_temp,pid_output");
+      printCsvHeader(dataFile);
       dataFile.close();
       Serial.print("Created new data file: ");
       Serial.println(logFileName);

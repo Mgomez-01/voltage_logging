@@ -23,13 +23,13 @@ CD74HC4067 channels:
 ├─ C0 -> voltage source
 └─ C1 -> thermistor divider: 3.3V --[100k]-- C1 --[NTC]-- GND
 ```
-The SD card and heater wiring are in [WIRING_GUIDE.md](WIRING_GUIDE.md).
+The SD card and heater wiring are in [WIRING_GUIDE.md](../WIRING_GUIDE.md).
 
 ## How sampling works
 - One ADC read every 2 ms, alternating channel 0 and channel 1
 - Each channel is read up to 250 times per second
 - After each switch the firmware waits 10 µs + 50 µs for the signal to settle
-- Each thermistor read completes one row (latest voltage + temperature), so up to 250 CSV rows per second
+- Each thermistor read completes one row (latest voltage + temperature, both raw ADC counts, and the heater/PID state), so up to 250 CSV rows per second
 - Rows collect in a 50-row RAM buffer, then are appended to the current log file on the SD card
 
 Real rates are a little lower because sampling pauses during SD writes and the 1 s serial debug print.
@@ -46,6 +46,8 @@ R = 100k * V / (3.3 - V)
 ```
 -999 is logged when the sensor reads as open or shorted.
 
+The voltage `V` above is logged as `thermistor_v` (and the raw count as `thermistor_adc`), so each logged temperature can be checked or recalculated afterwards.
+
 Constants, in `src/sensor_manager.cpp`:
 ```cpp
 const float THERMISTOR_NOMINAL = 100000.0;   // 100 kΩ at 25 °C
@@ -58,10 +60,10 @@ Change these if you use a different thermistor.
 ## CSV format
 Each boot creates a new file on the SD card (`data.log`, `data_1.log`, ...):
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output
-120004,0.822266,43.812,1,45.00,31.47
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
+120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150
 ```
-Column details are in [README.md](README.md#data-format).
+Column details are in [README.md](../README.md#data-format).
 
 ## Expected serial output at boot
 ```
