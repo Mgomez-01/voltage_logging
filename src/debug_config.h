@@ -1,5 +1,11 @@
-#ifndef DEBUG_H
-#define DEBUG_H
+// Centralized debug macros (not included by any file yet; see DEBUG_MIGRATION_GUIDE.md).
+//
+// Do NOT rename this file to debug.h: the ESP8266 core has its own debug.h
+// (included from Stream.h via Arduino.h), and PlatformIO puts src/ first on
+// the include path, so a src/debug.h replaces the core's and breaks the build
+// ("'Serial' was not declared in this scope").
+#ifndef DEBUG_CONFIG_H
+#define DEBUG_CONFIG_H
 
 #include <Arduino.h>
 
@@ -202,4 +208,4 @@ inline void printDebugConfig() {
 #endif
 }
 
-#endif // DEBUG_H
+#endif // DEBUG_CONFIG_H
