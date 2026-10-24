@@ -1,130 +1,110 @@
-// ESP8266 Voltage Logger Configuration
-// Modify these values to customize your voltage logger
+// ESP8266 Voltage + Temperature Logger - Configuration Reference
+//
+// NOTE: This file is a REFERENCE ONLY. It is not included by any source file,
+// and nothing here is compiled into the firmware. The live values are defined
+// in the source files listed next to each setting. Change them there. If
+// you do, update this file so it stays accurate.
 
 // =============================================================================
-// WIFI CONFIGURATION
+// WIFI (src/wifi_manager.cpp)
 // =============================================================================
-// Access Point credentials (what you connect to)
-const char* WIFI_SSID = "ESP8266_VoltageLogger";
-const char* WIFI_PASSWORD = "voltage123";
-
-// =============================================================================
-// SAMPLING CONFIGURATION  
-// =============================================================================
-// How often to read the ADC (milliseconds)
-const unsigned long ADC_SAMPLE_INTERVAL = 1;  // 1ms = 1000 Hz sampling
-
-// How often to update the web interface (milliseconds)
-const unsigned long WEB_UPDATE_INTERVAL = 100;  // 100ms = 10 Hz updates
-
-// Buffer size - how many readings to store before writing to file
-const int READING_BUFFER_SIZE = 100;
+// Access point the ESP8266 creates
+//   ssid     = "ESP8266_VoltageLogger"
+//   password = "voltage123"
+//   IP       = 192.168.4.1 (ESP8266 default AP address)
+//
+// Ports (src/main.cpp)
+//   HTTP      = 80
+//   WebSocket = 81
 
 // =============================================================================
-// VOLTAGE CONFIGURATION
+// SAMPLING (src/main.cpp)
 // =============================================================================
-// ADC voltage range - modify based on your setup
-// Option 1: 0-1V (default for bare ESP8266)
-#define VOLTAGE_RANGE_0_1V
-float convertADCtoVoltage(int adcValue) {
-    return (adcValue / 1024.0);  // 0-1V
-}
-
-// Option 2: 0-3.3V (if using voltage divider)
-// Uncomment this and comment above for 3.3V range
-// #define VOLTAGE_RANGE_0_3V3
-// float convertADCtoVoltage(int adcValue) {
-//     return (adcValue / 1024.0) * 3.3;  // 0-3.3V
-// }
-
-// Option 3: Custom range
-// Uncomment and modify for custom voltage range
-// #define VOLTAGE_RANGE_CUSTOM
-// const float VOLTAGE_MIN = 0.0;
-// const float VOLTAGE_MAX = 5.0;
-// float convertADCtoVoltage(int adcValue) {
-//     return VOLTAGE_MIN + (adcValue / 1024.0) * (VOLTAGE_MAX - VOLTAGE_MIN);
-// }
+//   SAMPLE_INTERVAL     = 2 ms    One ADC read every 2 ms, alternating channels
+//                                 (up to 250 readings/s per channel)
+//   WEB_UPDATE_INTERVAL = 500 ms  WebSocket push of latest reading
+//   DEBUG_INTERVAL      = 1000 ms Serial stats print
+//   Low-heap auto-stop  = free heap < 8000 bytes stops logging
 
 // =============================================================================
-// WEB INTERFACE CONFIGURATION
+// SENSORS (src/sensor_manager.cpp)
 // =============================================================================
-// Maximum number of data points to show on chart (for performance)
-const int MAX_CHART_POINTS = 500;
-
-// Maximum number of log entries to show in text log
-const int MAX_LOG_ENTRIES = 1000;
-
-// Chart Y-axis limits (set to match your voltage range)
-const float CHART_Y_MIN = 0.0;
-const float CHART_Y_MAX = 1.0;
-
-// =============================================================================
-// FILE SYSTEM CONFIGURATION
-// =============================================================================
-// Name of the data file stored on SPIFFS
-const char* DATA_FILENAME = "/voltage_data.csv";
-
-// Whether to include timestamp in filename (creates unique files)
-const bool USE_TIMESTAMP_IN_FILENAME = false;
+// CD74HC4067 mux select pins
+//   MUX_S0 = GPIO5  (D1)
+//   MUX_S1 = GPIO4  (D2)
+//   MUX_S2 = GPIO0  (D3)
+//   MUX_S3 = GPIO2  (D4)
+//   ADC_PIN = A0 (mux COM)
+//
+// Channels
+//   VOLTAGE_CHANNEL    = 0   voltage = ADC / 1024 (0-1 V scale)
+//   THERMISTOR_CHANNEL = 1
+//
+// Thermistor (100k NTC, Beta equation)
+//   THERMISTOR_NOMINAL  = 100000.0  ohm at 25 C
+//   TEMPERATURE_NOMINAL = 25.0      C
+//   B_COEFFICIENT       = 3950.0
+//   SERIES_RESISTOR     = 100000.0  ohm (3.3V -- R -- C1 -- NTC -- GND)
 
 // =============================================================================
-// SERIAL DEBUGGING
+// DATA LOGGING - SD CARD (src/data_manager.cpp)
 // =============================================================================
-// Baud rate for serial communication
-const long SERIAL_BAUD_RATE = 115200;
-
-// Enable/disable debug output
-const bool ENABLE_DEBUG_OUTPUT = true;
-
-// =============================================================================
-// NETWORK CONFIGURATION
-// =============================================================================
-// Web server port
-const int HTTP_PORT = 80;
-
-// WebSocket port  
-const int WEBSOCKET_PORT = 81;
-
-// Access Point IP configuration
-// Default: 192.168.4.1 (standard ESP8266 AP)
-// Modify only if you need different IP range
-IPAddress AP_LOCAL_IP(192, 168, 4, 1);
-IPAddress AP_GATEWAY(192, 168, 4, 1); 
-IPAddress AP_SUBNET(255, 255, 255, 0);
+// SD card on hardware SPI: SCK=D5 (GPIO14), MISO=D6 (GPIO12),
+//                          MOSI=D7 (GPIO13), CS=D8 (GPIO15, SS)
+//   SD.begin(SS)
+//
+//   BUFFER_SIZE   = 50 rows        RAM buffer before each SD write
+//   MAX_FILE_SIZE = 50000000 bytes Rotate to a new file at 50 MB
+//   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
+//   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output
+//   MAX_WRITE_TIME = 5000 ms       A single SD write is abandoned after 5 s;
+//                                  the watchdog is fed every 5 rows
+//   If the SD card is not ready at boot, no log file is created. /start
+//   (Start Logging) retries the SD setup and refuses with HTTP 503 if it
+//   still fails. /data.csv with no ?file= downloads the current log file.
+//
+// Internal flash (LittleFS) holds ONLY the web page template
+// (data/index.template.html, uploaded with `pio run -t uploadfs`).
+// No sensor data is stored in internal flash.
 
 // =============================================================================
-// ADVANCED CONFIGURATION
+// HEATER PWM + PID (src/heater_controller.cpp)
 // =============================================================================
-// ADC pin (A0 is the only ADC pin on ESP8266)
-const int ADC_INPUT_PIN = A0;
-
-// Watchdog timer reset interval (milliseconds)
-const unsigned long WATCHDOG_INTERVAL = 1000;
-
-// Maximum file size before rotation (bytes) - 0 to disable
-const long MAX_FILE_SIZE = 0;  // Disabled by default
+//   HEATER_PWM_PIN       = GPIO16 (D0) -> AOD4144 MOSFET gate
+//   PWM_FREQUENCY        = 32 Hz via analogWriteFreq(). The core docs list
+//                          100 Hz as the minimum, but core 3.1.2's default
+//                          PWM engine uses 32 Hz (only its fallback path
+//                          clamps to 100 Hz).
+//   PWM_RANGE            = 1000 (0.1% resolution)
+//
+//   targetTemperature    = 45.0 C default (settable 0 - MAX_SAFE_TEMPERATURE)
+//   pidKp                = 2.2
+//   pidKi                = 0.25
+//   pidKd                = 0.15
+//   PID_INTERVAL         = 500 ms
+//   Integral clamp       = +/-100 (+/-25% output with Ki = 0.25)
+//   Output               = 0-100% -> PWM duty
+//
+//   MAX_SAFE_TEMPERATURE = 130.0 C        Over-temp emergency shutdown
+//   MAX_HEATER_TIME      = 1800000 ms     30 min continuous heating limit
+//
+//   The over-temp and sensor-fault checks use the latest logged reading, so
+//   they only run while logging is on. The PID itself reads the sensor
+//   directly when the buffer is empty.
 
 // =============================================================================
-// USAGE NOTES
+// SAFETY SYSTEM (src/safety_system.cpp)
 // =============================================================================
-/*
-QUICK START:
-1. Modify WIFI_SSID and WIFI_PASSWORD above
-2. Choose your voltage range (0-1V, 0-3.3V, or custom)
-3. Upload to ESP8266
-4. Connect to the WiFi network
-5. Open browser to http://192.168.4.1
+//   SAFETY_CHECK_INTERVAL = 500 ms   Ticker heater-runtime check
+//   Watchdog ticker       = 8000 ms  Software watchdog check
+//   WATCHDOG_TIMEOUT      = 10000 ms ESP hardware watchdog
+//   System reset (/system/reset) allowed only below MAX_SAFE_TEMPERATURE - 10
+//   Emergency shutdown: PWM 0, PID off, logging off, open log file closed
 
-PERFORMANCE TUNING:
-- Increase ADC_SAMPLE_INTERVAL to reduce CPU load
-- Decrease WEB_UPDATE_INTERVAL for faster web updates
-- Adjust READING_BUFFER_SIZE based on available memory
-- Reduce MAX_CHART_POINTS if web interface is slow
-
-TROUBLESHOOTING:
-- Check Serial Monitor at 115200 baud for debug messages
-- Ensure all required libraries are installed
-- Verify voltage range matches your hardware setup
-- Try different browsers if web interface has issues
-*/
+// =============================================================================
+// SERIAL / DEBUG
+// =============================================================================
+//   Baud rate = 115200
+//   DEBUG_* flags are set per file (main.cpp, heater_controller.cpp,
+//   web_interface.cpp). src/debug_config.h holds centralized macros but is not
+//   included yet (see DEBUG_MIGRATION_GUIDE.md).
