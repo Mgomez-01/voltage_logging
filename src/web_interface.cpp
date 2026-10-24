@@ -9,7 +9,8 @@
 unsigned long totalWebSocketMessages = 0;
 unsigned long connectedClients = 0;
 
-// Debug configuration (accessing from main file defines)
+// Debug configuration for this file only (the DEBUG_* defines in main.cpp
+// do not reach other .cpp files)
 #define DEBUG_WEBSOCKET 1
 
 void setupWebServer() {
@@ -169,7 +170,7 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{LOGGING_STATUS_COLOR_INITIAL}}", dataLoggingEnabled ? "#28a745" : "#dc3545");
         line.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
-        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting dual sensor readings at 500Hz" : "Click 'Start Logging' to begin data collection");
+        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting dual sensor readings (up to 250 per second per channel)" : "Click 'Start Logging' to begin data collection");
         line.replace("{{RELAY_STATUS_TEXT_INITIAL}}", heaterDutyCycle > 0 ? "ON" : "OFF");
         line.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", heaterDutyCycle > 0 ? "heater-on" : "heater-off");
         line.replace("{{PWM_DUTY_CYCLE_INITIAL}}", String(heaterDutyCycle, 1));
@@ -209,8 +210,13 @@ void handleDataDownload() {
     server.send(500, "text/plain", "SD card not found");
     return;
   }
-  if (server.hasArg("file")) {
-    String filename = server.arg("file");
+  // No "file" argument (e.g. the main "Download Data" button): send the log
+  // file currently being written. Its name changes every boot and on rotation.
+  String filename = server.hasArg("file") ? server.arg("file") : String(logFileName);
+  if (filename.length() > 0) {
+    if (filename == logFileName) {
+      flushDataBuffer(); // include rows still waiting in the RAM buffer
+    }
     Serial.print("Downloading file: ");
     Serial.println(filename);
 
@@ -230,7 +236,8 @@ void handleDataDownload() {
       Serial.println("HTTP: ERROR - Log file does not exist");
     }
   } else {
-    server.send(400, "text/plain", "Missing file parameter");
+    // Only reached if no file was given and no log file was created at boot
+    server.send(404, "text/plain", "No current log file (SD card was not ready at boot)");
   }
 }
 
@@ -287,12 +294,26 @@ void handleStatus() {
 
 void handleStartLogging() {
   Serial.println("HTTP: Start logging requested");
+
+  // If the SD card was not ready at boot, no log file was created and every
+  // buffer write would fail. Try again now (e.g. after the card was inserted).
+  if (logFileName[0] == '\0') {
+    Serial.println("HTTP: No log file yet - retrying SD card setup");
+    initializeDataFile();
+  }
+  if (logFileName[0] == '\0') {
+    server.send(503, "text/plain", "Cannot start logging: SD card not ready (no log file). Check the card and try again.");
+    Serial.println("HTTP: Logging NOT started - SD card not ready");
+    return;
+  }
+
   dataLoggingEnabled = true;
   lastSample = millis();
   lastWebUpdate = millis();
   currentSensorChannel = VOLTAGE_CHANNEL;
   server.send(200, "text/plain", "Dual sensor logging started");
-  Serial.println("HTTP: Dual sensor logging STARTED - now collecting voltage and temperature readings");
+  Serial.print("HTTP: Dual sensor logging STARTED - writing to ");
+  Serial.println(logFileName);
 }
 
 void handleStopLogging() {
