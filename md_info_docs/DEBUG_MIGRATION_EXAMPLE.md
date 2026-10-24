@@ -200,7 +200,7 @@ void clearDataFile() {
   bufferIndex = 0;
   bufferFull = false;
   totalReadings = 0;
-  Serial.println("Data cleared successfully - fresh CSV will contain only new dual sensor readings");
+  Serial.println("Data cleared successfully - fresh CSV will contain only new sensor readings");
 }
 ```
 
@@ -227,7 +227,7 @@ void clearDataFile() {
   bufferIndex = 0;
   bufferFull = false;
   totalReadings = 0;
-  FILE_PRINTLN("Data cleared successfully - fresh CSV will contain only new dual sensor readings");
+  FILE_PRINTLN("Data cleared successfully - fresh CSV will contain only new sensor readings");
 }
 ```
 

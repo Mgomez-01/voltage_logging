@@ -25,17 +25,18 @@ Files reviewed: src/main.cpp, sensor_manager.*, data_manager.*,
 
 1. SYSTEM OVERVIEW
 -------------------------------------------------------------------------------
-The ESP8266 reads two analog signals (a voltage and a 100k NTC thermistor)
-through a CD74HC4067 multiplexer. It logs them as CSV to a microSD card and
-regulates a 12 V heater with a PID controller that drives an AOD4144 MOSFET
-using PWM. The board creates its own WiFi network. A web page (served from
+The ESP8266 reads three analog signals through a CD74HC4067 multiplexer: a
+voltage, the PID Temp Sensor (100k NTC, controls the heater) and the AUX Temp
+Sensor (MF55 10k NTC at a second location, logged only as a redundancy /
+sanity check). It logs them as CSV to a microSD card and regulates a 12 V
+heater with a PID controller that drives an AOD4144 MOSFET using PWM. The board creates its own WiFi network. A web page (served from
 internal flash) shows live data and has buttons to start/stop logging, manage
 the SD log files, control the heater, tune the PID and reset after a fault.
 
 Signal chain:
-  Voltage source  --> MUX C0 --\
-                                >-- MUX COM --> ESP8266 A0 (10-bit ADC)
-  Thermistor div. --> MUX C1 --/
+  Voltage source    --> MUX C0 --\
+  PID Temp Sensor  --> MUX C1 ---+-- MUX COM --> ESP8266 A0 (10-bit ADC)
+  AUX Temp Sensor  --> MUX C2 --/
   ESP8266 SPI (D5-D8) <------> microSD module      (data logs)
   ESP8266 GPIO16 (PWM) --> AOD4144 gate --> 12 V heater (low-side switch)
 
@@ -60,7 +61,7 @@ Flash steps ........ pio run -e <env> -t upload     (firmware)
 
 Code layout (refactored into modules):
   main.cpp ............... setup/loop, sampling, debug stats, low-heap guard
-  sensor_manager ......... mux control, thermistor conversion
+  sensor_manager ......... mux control, PID/AUX thermistor conversion
   data_manager ........... RAM buffer, SD card, file naming/rotation
   heater_controller ...... PWM output, PID, heater safety checks
   safety_system .......... Ticker safety check, watchdog, emergency shutdown
@@ -71,7 +72,7 @@ Boot sequence (setup()):
   1. Serial 115200, 1 s wait
   2. Mux select pins -> outputs, channel 0
   3. Heater PWM init: analogWriteFreq(32), analogWriteRange(1000), duty 0
-  4. Self-test read of channel 0 and channel 1
+  4. Self-test read of channels 0, 1 and 2
   5. Mount LittleFS (web page)
   6. Start WiFi access point
   7. HTTP server (port 80) and WebSocket server (port 81)
@@ -91,7 +92,7 @@ Network:
 -------------------------------------------------------------------------------
 Label  GPIO    Connected to            Function
 -----  ------  ----------------------  -----------------------------------------
-A0     ADC     CD74HC4067 COM          Analog input (both sensors)
+A0     ADC     CD74HC4067 COM          Analog input (all mux channels)
 D0     GPIO16  AOD4144 gate            Heater PWM (10k pull-down gate->GND)
 D1     GPIO5   CD74HC4067 S0           Mux select bit 0
 D2     GPIO4   CD74HC4067 S1           Mux select bit 1
@@ -101,12 +102,13 @@ D5     GPIO14  SD module SCK           SPI clock
 D6     GPIO12  SD module MISO          SPI data in
 D7     GPIO13  SD module MOSI          SPI data out
 D8     GPIO15  SD module CS            SPI chip select (SS) (boot pin: must be LOW)
-3V3    -       Mux VCC+EN, SD VCC, thermistor divider top
-GND    -       Mux, SD, thermistor, MOSFET source, 12 V supply ground (common)
+3V3    -       Mux VCC+EN, SD VCC, top of both thermistor dividers
+GND    -       Mux, SD, thermistors, MOSFET source, 12 V supply ground (common)
 
 All usable GPIOs are in use. Only RX/TX are free.
 
-Mux channels: C0 = voltage, C1 = thermistor, C2-C15 free.
+Mux channels: C0 = voltage, C1 = PID Temp Sensor, C2 = AUX Temp Sensor,
+              C3-C15 free.
 
 
 4. PERIPHERALS / HARDWARE
@@ -115,15 +117,28 @@ a) CD74HC4067 16-channel analog multiplexer
    - 3.3 V supply, ~70 ohm on-resistance, EN tied active
    - Firmware waits 10 us after switching + 50 us settling before each read
 
-b) Thermistor (channel C1)
+b) PID Temp Sensor (channel C1) - controls the heater
    - 100 k NTC, Beta = 3950 K (same type as the Creality Ender 3)
    - R25 = 100,000 ohm; series resistor = 100,000 ohm to 3.3 V
    - Wiring: 3.3V -- [100k] -- C1 -- [NTC] -- GND
-   - Conversion (Beta equation):
+   - Used by the PID and by the over-temp / sensor-fault safety checks
+   - Resolution: ~4-6 ADC counts per C at 60-70 C
+
+   AUX Temp Sensor (channel C2) - redundancy / sanity check
+   - MF55 ultra-thin 10 k NTC, Beta = 3950 K (B25/50), +/-1 %, 0.7 mW/C
+   - Series resistor = 2.0 k ohm to 3.3 V (sized for 60-70 C, where the
+     NTC is ~2.5-1.8 k): ~9 ADC counts per C (~0.11 C per count)
+   - Wiring: 3.3V -- [2.0k] -- C2 -- [MF55 NTC] -- GND
+   - Logged and displayed only: NOT used by the PID or the safety checks
+   - Self-heating with 2.0k: ~1.4 mW at 65 C, up to ~1.9 C high in still
+     air (less when pressed against a surface; 2.7k reduces it ~25 %)
+
+   Conversion for both (Beta equation):
        V = ADC/1024 * 3.3
-       R = 100k * V / (3.3 - V)
-       1/T = 1/298.15 + ln(R/100k)/3950     T(C) = T(K) - 273.15
-   - Error value -999 if ADC <= 1 (short) or V >= 3.29 V (open)
+       R = Rs * V / (3.3 - V)           (Rs = 100k PID, 2.0k AUX)
+       1/T = 1/298.15 + ln(R/R25)/3950  (R25 = 100k PID, 10k AUX)
+       T(C) = T(K) - 273.15
+   - Error value -999 if ADC <= 1 (short) or V >= 3.29 V (open / not connected)
 
 c) Voltage channel (C0)
    - voltage = ADC / 1024 (0-1 V scale, 10-bit, ~1 mV per step)
@@ -150,12 +165,13 @@ f) WiFi radio (built in): access point for the web UI
 -------------------------------------------------------------------------------
 Parameter               Value       Meaning
 ----------------------  ----------  ---------------------------------------------
-SAMPLE_INTERVAL         2 ms        One ADC read every 2 ms, alternating C0/C1
-Per-channel rate        250 Hz max  Each channel read every 4 ms
-CSV row rate            250 rows/s  One row per C0+C1 pair (theoretical max)
+SAMPLE_INTERVAL         2 ms        One ADC read every 2 ms, cycling C0->C1->C2
+Per-channel rate        ~167 Hz max Each channel read every 6 ms
+CSV row rate            ~167 rows/s One row per C0+C1+C2 cycle (theoretical max);
+                                    the three readings are within ~4 ms
 Mux settle              10 + 50 us  Before each analogRead
 BUFFER_SIZE (window)    50 rows     RAM buffer, written to SD when full
-                                    (~every 200 ms at the full rate). Reduced
+                                    (~every 300 ms at the full rate). Reduced
                                     from 100 to save ~1.4 KB of RAM.
 WEB_UPDATE_INTERVAL     500 ms      Latest row pushed over WebSocket (2 Hz),
                                     slowed from 100 ms to save memory
@@ -192,8 +208,9 @@ PID gains (defaults; comment in code: "tested and work well at 50 C"):
   Changeable at runtime: GET /pid/params?kp=&ki=&kd=  (resets the integral)
 
 Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
-  temp       = latest buffered reading, or a direct sensor read if the
-               buffer is empty (so the PID works with logging OFF)
+  temp       = latest buffered PID Temp Sensor reading, or a direct read of
+               that sensor if the buffer is empty (so the PID works with
+               logging OFF). The AUX Temp Sensor is never used here.
   skip update if temp is invalid (< -50, > 200, NaN)
   error      = target - temp
   P          = Kp * error
@@ -221,6 +238,7 @@ Safety layers:
   1. Ticker every 500 ms: heater on for more than 30 min straight -> PWM 0,
      shutdown
   2. Main loop: over-temp (> 130 C) and sensor fault -> shutdown
+     (PID Temp Sensor only; the AUX Temp Sensor does not trigger shutdowns)
   3. Main loop: safety ticker hasn't run for 1.5 s -> shutdown
   4. Software watchdog ticker (8 s): loop stalled -> PWM 0, shutdown
      (8 s leaves room for slow SD writes)
@@ -240,7 +258,8 @@ File names ........... data.log, data_1.log, data_2.log, ...
 File rotation ........ When the current file reaches 50 MB (MAX_FILE_SIZE =
                        50,000,000 B), a new data_N.log is started with a header
 Header ............... timestamp,voltage,temperature,heater_state,target_temp,pid_output,
-                       voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
+                       voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
+                       aux_temp,aux_adc,aux_v
 Write strategy ....... 50-row RAM buffer -> open file, append 50 rows, close.
                        Also flushed on Stop Logging and on low-heap auto-stop.
 Write protection ..... 5 s max per write; watchdog fed every 5 rows; skips a
@@ -254,9 +273,9 @@ CSV columns:
 | # | Column       | Unit  | Format     | Description                           |
 +---+--------------+-------+------------+---------------------------------------+
 | 1 | timestamp    | ms    | integer    | millis() since boot when the C1       |
-|   |              |       |            | (thermistor) sample was taken         |
+|   |              |       |            | (PID Temp Sensor) sample was taken    |
 | 2 | voltage      | V     | 6 decimals | Channel 0, ADC/1024 (0-1 V scale)     |
-| 3 | temperature  | deg C | 3 decimals | Channel 1 thermistor                  |
+| 3 | temperature  | deg C | 3 decimals | PID Temp Sensor, channel 1            |
 |   |              |       |            | (-999 = open/short sensor)            |
 | 4 | heater_state | 0/1   | integer    | 1 if heater PWM duty > 0 %            |
 | 5 | target_temp  | deg C | 2 decimals | PID setpoint at sample time           |
@@ -273,21 +292,28 @@ CSV columns:
 |11 | kp           | -     | 3 decimals | PID gains in effect for that row      |
 |12 | ki           | -     | 3 decimals | (buffer is flushed before the gains   |
 |13 | kd           | -     | 3 decimals |  change, so rows are never mislabeled)|
+|14 | aux_temp     | deg C | 3 decimals | AUX Temp Sensor, channel 2            |
+|   |              |       |            | (-999 = open/short / not connected)   |
+|15 | aux_adc      | counts| integer    | Raw ADC reading, channel 2 (0-1023)   |
+|16 | aux_v        | V     | 4 decimals | AUX divider voltage = adc/1024 * 3.3; |
+|   |              |       |            | the exact value aux_temp is           |
+|   |              |       |            | calculated from                       |
 +---+--------------+-------+------------+---------------------------------------+
 
-Columns 1-6 are the original format; 7-13 were added after them.
-thermistor_v lets you re-check every temperature:
-  R = 100k * V / (3.3 - V);  1/T = 1/298.15 + ln(R/100k)/3950  (T in K)
-  -> matches the logged temperature to within ~0.003 C.
+Columns 1-6 are the original format; 7-16 were added after them.
+thermistor_v and aux_v let you re-check every temperature:
+  R = Rs * V / (3.3 - V);  1/T = 1/298.15 + ln(R/R25)/3950  (T in K)
+  PID: Rs = 100k, R25 = 100k     AUX: Rs = 2.0k, R25 = 10k
+  -> matches the logged temperatures to within a few thousandths of a C.
 
 Example rows:
-  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
-  120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150
-  120008,0.823242,25.088,1,45.00,18.40,843,511,1.6468,1,2.200,0.250,0.150
+  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
+  120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150,25.053,853,2.7489
+  120010,0.823242,25.088,1,45.00,18.40,843,511,1.6468,1,2.200,0.250,0.150,25.210,852,2.7457
 
 Data volume (theoretical maximum rate):
-  ~73 bytes/row x 250 rows/s = ~18 KB/s = ~66 MB/hour
-  -> a new 50 MB file about every 45 min; an 8 GB card holds ~120 h
+  ~91 bytes/row x ~167 rows/s = ~15 KB/s = ~55 MB/hour
+  -> a new 50 MB file about every 55 min; an 8 GB card holds ~145 h
   (Real rate is lower, see section 5. Timestamps restart at 0 in each
    boot's file, so files don't mix runs.)
 

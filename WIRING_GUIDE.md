@@ -1,4 +1,4 @@
-# Wiring Guide: Multiplexer, SD Card and PWM Heater
+# Wiring Guide: Multiplexer, Temperature Sensors, SD Card and PWM Heater
 
 ## Pin Mapping
 
@@ -6,7 +6,7 @@
 ```
 Label | GPIO   | Connected to          | Function
 ------|--------|-----------------------|---------------------------------
-A0    | ADC    | CD74HC4067 COM        | Analog input (both sensors)
+A0    | ADC    | CD74HC4067 COM        | Analog input (all mux channels)
 D0    | GPIO16 | AOD4144 gate          | Heater PWM
 D1    | GPIO5  | CD74HC4067 S0         | Mux select bit 0
 D2    | GPIO4  | CD74HC4067 S1         | Mux select bit 1
@@ -16,8 +16,8 @@ D5    | GPIO14 | SD module SCK         | SPI clock
 D6    | GPIO12 | SD module MISO        | SPI data in
 D7    | GPIO13 | SD module MOSI        | SPI data out
 D8    | GPIO15 | SD module CS          | SPI chip select (boot pin)
-3V3   | -      | Mux VCC + EN, SD VCC, thermistor divider top
-GND   | -      | Mux GND, SD GND, thermistor bottom, MOSFET source, 12 V supply GND
+3V3   | -      | Mux VCC + EN, SD VCC, top of both thermistor dividers
+GND   | -      | Mux GND, SD GND, both thermistors, MOSFET source, 12 V supply GND
 ```
 
 All usable GPIOs are in use. Only RX/TX remain free.
@@ -25,10 +25,11 @@ All usable GPIOs are in use. Only RX/TX remain free.
 ### CD74HC4067 Channels
 ```
 Channel | Connection
---------|---------------------------
+--------|---------------------------------------------------------------
 C0      | Voltage source
-C1      | Thermistor voltage divider
-C2-C15  | Free for more analog sensors
+C1      | PID Temp Sensor divider (100k NTC) - controls the heater
+C2      | AUX Temp Sensor divider (MF55 10k NTC) - logged only, not used by the PID
+C3-C15  | Free for more analog sensors
 ```
 
 ## Complete Wiring Diagram
@@ -45,28 +46,29 @@ C2-C15  | Free for more analog sensors
                         │                        D8 ├────── SD CS
                         └───────────────────────────┘
 
-   CD74HC4067                         microSD module
-   ┌──────────────┐                   ┌──────────────┐
-   │ VCC, EN ── 3.3 V                 │ VCC ── 3.3 V │
-   │ GND ────── GND                   │ GND ── GND   │
-   │ COM ────── A0                    │ SCK ── D5    │
-   │ S0-S3 ──── D1-D4                 │ MISO ─ D6    │
-   │ C0 ─────── voltage source        │ MOSI ─ D7    │
-   │ C1 ─────── thermistor divider    │ CS ─── D8    │
-   └──────────────┘                   └──────────────┘
+   CD74HC4067                             microSD module
+   ┌──────────────────────────────┐       ┌──────────────┐
+   │ VCC, EN ── 3.3 V             │       │ VCC ── 3.3 V │
+   │ GND ────── GND               │       │ GND ── GND   │
+   │ COM ────── A0                │       │ SCK ── D5    │
+   │ S0-S3 ──── D1-D4             │       │ MISO ─ D6    │
+   │ C0 ─────── voltage source    │       │ MOSI ─ D7    │
+   │ C1 ─────── PID Temp divider  │       │ CS ─── D8    │
+   │ C2 ─────── AUX Temp divider  │       └──────────────┘
+   └──────────────────────────────┘
 
-   Thermistor divider (C1)            Heater (low-side MOSFET switch)
-   3.3 V                              +12 V
-     │                                  │
-   [100 kΩ]                          [Heater]
-     │                                  │
-     ├──── C1                           ├──── Drain
-     │                                  │
-   [NTC 100k]               D0 ───┬──── Gate   AOD4144
-     │                            │     │
-    GND                        [10 kΩ]  Source
-                                  │     │
-                                 GND   GND (shared with ESP8266 GND)
+   PID Temp Sensor (C1)     AUX Temp Sensor (C2)     Heater (low-side MOSFET switch)
+   3.3 V                    3.3 V                    +12 V
+     │                        │                        │
+   [100 kΩ]                 [2.0 kΩ]                [Heater]
+     │                        │                        │
+     ├──── C1                 ├──── C2                 ├──── Drain
+     │                        │                        │
+   [NTC 100k]               [MF55 NTC 10k]  D0 ───┬──── Gate   AOD4144
+     │                        │                   │    │
+    GND                      GND               [10 kΩ] Source
+                                                  │    │
+                                                 GND  GND (shared with ESP8266 GND)
 ```
 
 ## Component Details
@@ -76,10 +78,18 @@ C2-C15  | Free for more analog sensors
 - Runs at 3.3 V (2-6 V supply), ~70 Ω on-resistance
 - The firmware waits 10 µs after switching plus 50 µs settling before each read
 
-### 100k NTC Thermistor
+### PID Temp Sensor: 100k NTC Thermistor (C1)
 - 100 kΩ at 25 °C, β = 3950 K (Ender 3 type)
 - 100 kΩ series resistor to 3.3 V
+- Used by the PID and by the over-temperature / sensor-fault safety checks
 - Firmware constants (`src/sensor_manager.cpp`): `THERMISTOR_NOMINAL`, `TEMPERATURE_NOMINAL`, `B_COEFFICIENT`, `SERIES_RESISTOR`
+
+### AUX Temp Sensor: MF55 Ultra-Thin 10k NTC Thermistor (C2)
+- 10 kΩ at 25 °C, β = 3950 K (B25/50), ±1 %; rated -30 to +125 °C; dissipation constant 0.7 mW/°C
+- 2.0 kΩ series resistor to 3.3 V, chosen for resolution around 60-70 °C (the NTC is ~2.5-1.8 kΩ there): ~9 ADC counts per °C. Anything from 2.0 kΩ to 2.7 kΩ gives about the same resolution at 60-65 °C.
+- Self-heating: with 2.0 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can read up to ~1.9 °C high in still air, and less when pressed flat against a surface. 2.7 kΩ cuts this by about a quarter.
+- Second sensor at a different location, for redundancy and sanity checks. It is logged and displayed but **not** used by the PID or the safety checks.
+- Firmware constants (`src/sensor_manager.cpp`): `AUX_THERMISTOR_NOMINAL`, `AUX_TEMPERATURE_NOMINAL`, `AUX_B_COEFFICIENT`, `AUX_SERIES_RESISTOR`. `AUX_SERIES_RESISTOR` must match the resistor fitted. Use 3435 for `AUX_B_COEFFICIENT` if the part is a 103F3435.
 
 ### microSD Module
 - SPI at 3.3 V, chip select on D8 (GPIO15), `SD.begin(SS)`
@@ -98,7 +108,10 @@ C2-C15  | Free for more analog sensors
 
 1. **Power rails**: 3.3 V and GND from the ESP8266 to the breadboard rails.
 2. **Multiplexer**: VCC and EN to 3.3 V, GND to ground, S0-S3 to D1-D4, COM to A0.
-3. **Sensors**: voltage source to C0. Thermistor divider to C1 (3.3 V → 100 kΩ → C1 → NTC → GND).
+3. **Sensors**:
+   - Voltage source to C0
+   - PID Temp Sensor divider to C1: 3.3 V → 100 kΩ → C1 → 100k NTC → GND
+   - AUX Temp Sensor divider to C2: 3.3 V → 2.0 kΩ → C2 → MF55 10k NTC → GND
 4. **SD module**: VCC 3.3 V, GND, SCK→D5, MISO→D6, MOSI→D7, CS→D8. Insert a formatted card.
 5. **Heater**: D0 → MOSFET gate, 10 kΩ gate→GND, source→GND, drain→heater(−), heater(+)→12 V, supply GND→common GND.
 
@@ -106,7 +119,8 @@ C2-C15  | Free for more analog sensors
 
 With a multimeter:
 - 3.3 V between mux VCC/EN and GND, and at the SD module VCC
-- ~1.65 V at C1 at room temperature
+- ~1.65 V at C1 at room temperature (PID Temp Sensor)
+- ~2.75 V at C2 at room temperature, ~1.7 V at 65 °C (AUX Temp Sensor with 2.0 kΩ)
 - Your source voltage at C0
 - 0 V at the MOSFET gate with the heater off
 
@@ -115,21 +129,23 @@ Expected serial output at boot (115200 baud):
 Setting up CD74HC4067 multiplexer... OK
 Multiplexer pins: S0=D1, S1=D2, S2=D3, S3=D4
 Channel 0: Voltage sensor
-Channel 1: Thermistor (100k NTC)
+Channel 1: PID Temp Sensor (100k NTC)
+Channel 2: AUX Temp Sensor (MF55 10k NTC, not used by PID)
 Initializing heater PWM control... OK
 PWM pin: GPIO16 (D0), Frequency: 32 Hz, Range: 0-1000
 PWM control via MOSFET (AOD4144) for smooth heater power regulation
 A0 pin number: 17
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V
-Channel 1 (Thermistor): 512 -> 25.00°C
+Channel 1 (PID Temp Sensor): 512 -> 25.00°C
+Channel 2 (AUX Temp Sensor): 853 -> 25.05°C
 ...
 Initializing data file... SD card initialized.
 Created new data file: data_3.log
 OK
 ```
 
-(ADC 512 is the divider midpoint, 1.65 V, which is exactly 25 °C for a 100k/100k divider. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
+(ADC 512 is the 100k/100k divider midpoint, 1.65 V, which is exactly 25 °C. ADC 853 is the nearest count to 25 °C for the 2.0 kΩ / 10k AUX divider. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
 
 ## Troubleshooting
 
@@ -140,10 +156,17 @@ OK
 - Check CS on D8 and the SPI lines, use a 3.3 V-compatible module, and reformat the card FAT32.
 - With no card at boot, no log file is created. Insert the card and press Start Logging (it retries the SD setup), or reboot.
 
-### Temperature shows N/A / -999
+### PID Temp Sensor shows N/A / -999
 - Check the divider on C1 and the 100 kΩ resistor. The thermistor should measure ~100 kΩ at room temperature.
 
-### Both channels read the same value
+### AUX Temp Sensor shows N/A / -999
+- Check the divider on C2 and the 2.0 kΩ resistor. The MF55 should measure ~10 kΩ at room temperature.
+- With the NTC unplugged, C2 is pulled up to 3.3 V and reads N/A. The heater and PID are unaffected.
+
+### PID and AUX Temp Sensors disagree at room temperature
+- Check that `AUX_SERIES_RESISTOR` and `AUX_B_COEFFICIENT` match the parts fitted, then compare both against a reference thermometer.
+
+### Channels read the same value
 - Check the S0-S3 wiring and that EN is tied active.
 
 ### Heater never turns on / stays on
@@ -151,7 +174,9 @@ OK
 
 ## Expected Performance
 
-- Sampling: one ADC read every 2 ms, alternating channels, so up to 250 readings/s per channel
+- Sampling: one ADC read every 2 ms, cycling channels 0 → 1 → 2, so up to ~167 readings/s per channel
 - Voltage resolution: 10-bit (~1 mV per step on the 0-1 V scale)
-- Temperature: ±1 °C after calibration
-- Logging: 50-row buffer written to the SD card, ~73 bytes per row (13 columns). A new 50 MB file about every 45 min at the full rate.
+- PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
+- AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
+- Temperature accuracy: ±1 °C after calibration
+- Logging: 50-row buffer written to the SD card, ~91 bytes per row (16 columns). A new 50 MB file about every 55 min at the full rate.

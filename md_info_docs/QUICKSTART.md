@@ -9,7 +9,8 @@ The ESP8266 platform and the ArduinoJson / WebSockets libraries download automat
 ## 2. Wire the hardware
 - CD74HC4067 mux: COM→A0, S0-S3→D1-D4, VCC+EN→3.3 V, GND
 - Voltage source → mux C0 (0-1 V scale in software)
-- Thermistor divider → mux C1: 3.3 V → 100 kΩ → C1 → 100k NTC → GND
+- PID Temp Sensor divider → mux C1: 3.3 V → 100 kΩ → C1 → 100k NTC → GND
+- AUX Temp Sensor divider → mux C2: 3.3 V → 2.0 kΩ → C2 → MF55 10k NTC → GND (logged only, not used by the PID)
 - microSD module: SCK→D5, MISO→D6, MOSI→D7, CS→D8, VCC 3.3 V, GND
 - Heater (optional): D0 → AOD4144 gate (10 kΩ gate→GND), 12 V heater on the drain, common ground
 

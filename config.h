@@ -20,8 +20,9 @@
 // =============================================================================
 // SAMPLING (src/main.cpp)
 // =============================================================================
-//   SAMPLE_INTERVAL     = 2 ms    One ADC read every 2 ms, alternating channels
-//                                 (up to 250 readings/s per channel)
+//   SAMPLE_INTERVAL     = 2 ms    One ADC read every 2 ms, cycling channels
+//                                 0 -> 1 -> 2 (up to ~167 readings/s per
+//                                 channel, one CSV row per cycle)
 //   WEB_UPDATE_INTERVAL = 500 ms  WebSocket push of latest reading
 //   DEBUG_INTERVAL      = 1000 ms Serial stats print
 //   Low-heap auto-stop  = free heap < 8000 bytes stops logging
@@ -37,14 +38,23 @@
 //   ADC_PIN = A0 (mux COM)
 //
 // Channels
-//   VOLTAGE_CHANNEL    = 0   voltage = ADC / 1024 (0-1 V scale)
-//   THERMISTOR_CHANNEL = 1
+//   VOLTAGE_CHANNEL        = 0   voltage = ADC / 1024 (0-1 V scale)
+//   THERMISTOR_CHANNEL     = 1   PID Temp Sensor (PID + safety checks)
+//   AUX_THERMISTOR_CHANNEL = 2   AUX Temp Sensor (logged/displayed only)
 //
-// Thermistor (100k NTC, Beta equation)
+// PID Temp Sensor (100k NTC, Beta equation)
 //   THERMISTOR_NOMINAL  = 100000.0  ohm at 25 C
 //   TEMPERATURE_NOMINAL = 25.0      C
 //   B_COEFFICIENT       = 3950.0
 //   SERIES_RESISTOR     = 100000.0  ohm (3.3V -- R -- C1 -- NTC -- GND)
+//
+// AUX Temp Sensor (MF55 ultra-thin 10k NTC, Beta equation)
+//   AUX_THERMISTOR_NOMINAL  = 10000.0  ohm at 25 C
+//   AUX_TEMPERATURE_NOMINAL = 25.0     C
+//   AUX_B_COEFFICIENT       = 3950.0   (B25/50; use 3435 for a 103F3435 part)
+//   AUX_SERIES_RESISTOR     = 2000.0   ohm (3.3V -- R -- C2 -- NTC -- GND)
+//                             Must match the resistor fitted. ~9 counts/C at
+//                             60-70 C; 2.0k-2.7k give about the same.
 
 // =============================================================================
 // DATA LOGGING - SD CARD (src/data_manager.cpp)
@@ -57,11 +67,14 @@
 //   MAX_FILE_SIZE = 50000000 bytes Rotate to a new file at 50 MB
 //   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
 //   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output,
-//                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd
-//                   (CSV_HEADER in data_manager.cpp; ~73 bytes per row)
-//     voltage_adc / thermistor_adc = raw ADC counts (0-1023)
-//     thermistor_v = thermistor_adc / 1024 * 3.3, the voltage the temperature
-//                    is calculated from (thermistorAdcToVoltage())
+//                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
+//                   aux_temp,aux_adc,aux_v
+//                   (CSV_HEADER in data_manager.cpp; ~91 bytes per row)
+//     temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
+//     aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
+//     *_adc        = raw ADC counts (0-1023)
+//     *_v          = adc / 1024 * 3.3, the voltage each temperature is
+//                    calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
 //     kp, ki, kd   = gains in effect; /pid/params flushes the buffer before
 //                    changing them

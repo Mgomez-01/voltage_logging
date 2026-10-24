@@ -61,20 +61,24 @@ void sendWebUpdate() {
       
       // Skip redundant updates to reduce memory allocations
       static float lastSentTemp = -999;
+      static float lastSentAuxTemp = -999;
       static float lastSentVoltage = -999;
       static bool lastSentHeaterState = false;
       float currentTemp = readings[idx].temperature;
+      float currentAuxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
       float currentVoltage = readings[idx].voltage;
       bool currentHeaterState = readings[idx].heaterState;
-      
+
       // Only send if changed significantly or heater state changed
-      if (abs(currentTemp - lastSentTemp) < 0.1 && 
+      if (abs(currentTemp - lastSentTemp) < 0.1 &&
+          abs(currentAuxTemp - lastSentAuxTemp) < 0.1 &&
           abs(currentVoltage - lastSentVoltage) < 0.01 &&
           currentHeaterState == lastSentHeaterState) {
         return;  // Skip this update - no significant change
       }
-      
+
       lastSentTemp = currentTemp;
+      lastSentAuxTemp = currentAuxTemp;
       lastSentVoltage = currentVoltage;
       lastSentHeaterState = currentHeaterState;
       
@@ -84,7 +88,8 @@ void sendWebUpdate() {
       
       doc["timestamp"] = readings[idx].timestamp;
       doc["voltage"] = readings[idx].voltage;
-      doc["temperature"] = readings[idx].temperature;
+      doc["temperature"] = readings[idx].temperature;   // PID Temp Sensor
+      doc["auxTemperature"] = currentAuxTemp;            // AUX Temp Sensor
       doc["type"] = "reading";
       doc["heaterState"] = readings[idx].heaterState;
       doc["targetTemp"] = readings[idx].targetTemp;
@@ -103,7 +108,8 @@ void sendWebUpdate() {
         Serial.print(" clients: "); Serial.print(jsonBuffer);
         Serial.print(" (buffer idx: "); Serial.print(idx);
         Serial.print(", V: "); Serial.print(readings[idx].voltage, 4);
-        Serial.print("V, T: "); Serial.print(readings[idx].temperature, 2); Serial.println("°C)");
+        Serial.print("V, PID T: "); Serial.print(readings[idx].temperature, 2);
+        Serial.print(F("°C, AUX T: ")); Serial.print(currentAuxTemp, 2); Serial.println("°C)");
       }
       #endif
     }
@@ -121,13 +127,13 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       Serial.printf("WebSocket: Now %u clients connected\n", webSocket.connectedClients());
       JsonDocument doc;
       doc["type"] = "welcome";
-      doc["message"] = "Dual sensor WebSocket connected successfully";
-      doc["sensors"] = "voltage+temperature";
+      doc["message"] = "Sensor WebSocket connected successfully";
+      doc["sensors"] = "voltage+pid_temp+aux_temp";
       doc["timestamp"] = millis();
       String welcomeJson;
       serializeJson(doc, welcomeJson);
       webSocket.sendTXT(num, welcomeJson);
-      Serial.println("WebSocket: Welcome message sent for dual sensor logger");
+      Serial.println("WebSocket: Welcome message sent for sensor logger");
       break;
     }
     case WStype_TEXT:
@@ -170,7 +176,7 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{LOGGING_STATUS_COLOR_INITIAL}}", dataLoggingEnabled ? "#28a745" : "#dc3545");
         line.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
-        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting dual sensor readings (up to 250 per second per channel)" : "Click 'Start Logging' to begin data collection");
+        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 per second per channel)" : "Click 'Start Logging' to begin data collection");
         line.replace("{{RELAY_STATUS_TEXT_INITIAL}}", heaterDutyCycle > 0 ? "ON" : "OFF");
         line.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", heaterDutyCycle > 0 ? "heater-on" : "heater-off");
         line.replace("{{PWM_DUTY_CYCLE_INITIAL}}", String(heaterDutyCycle, 1));
@@ -262,13 +268,20 @@ void handleStatus() {
   delay(5);
   int tempADC = analogRead(A0);
   float currentTemperature = convertThermistorToTemperature(tempADC);
+  selectMuxChannel(AUX_THERMISTOR_CHANNEL);
+  delay(5);
+  int auxADC = analogRead(A0);
+  float currentAuxTemperature = convertAuxThermistorToTemperature(auxADC);
   JsonDocument doc;
   doc["timestamp"] = millis();
   doc["voltage"] = currentVoltage;
-  doc["temperature"] = currentTemperature;
+  doc["temperature"] = currentTemperature;            // PID Temp Sensor
+  doc["auxTemperature"] = currentAuxTemperature;      // AUX Temp Sensor
   doc["voltageADC"] = voltageADC;
   doc["temperatureADC"] = tempADC;
   doc["thermistorVoltage"] = thermistorAdcToVoltage(tempADC);
+  doc["auxTemperatureADC"] = auxADC;
+  doc["auxThermistorVoltage"] = thermistorAdcToVoltage(auxADC);
   doc["type"] = "reading";
   doc["totalReadings"] = totalReadings;
   doc["connectedClients"] = webSocket.connectedClients();
@@ -287,8 +300,10 @@ void handleStatus() {
   server.send(200, "application/json", jsonString);
   Serial.print("HTTP: Status sent - V:");
   Serial.print(currentVoltage, 4);
-  Serial.print("V, T:");
+  Serial.print("V, PID T:");
   Serial.print(currentTemperature, 2);
+  Serial.print(F("°C, AUX T:"));
+  Serial.print(currentAuxTemperature, 2);
   Serial.print("°C, Logging:");
   Serial.println(dataLoggingEnabled ? "ON" : "OFF");
 }
@@ -312,8 +327,8 @@ void handleStartLogging() {
   lastSample = millis();
   lastWebUpdate = millis();
   currentSensorChannel = VOLTAGE_CHANNEL;
-  server.send(200, "text/plain", "Dual sensor logging started");
-  Serial.print("HTTP: Dual sensor logging STARTED - writing to ");
+  server.send(200, "text/plain", "Sensor logging started");
+  Serial.print("HTTP: Sensor logging STARTED - writing to ");
   Serial.println(logFileName);
 }
 
@@ -321,8 +336,8 @@ void handleStopLogging() {
   Serial.println("HTTP: Stop logging requested");
   dataLoggingEnabled = false;
   flushDataBuffer();
-  server.send(200, "text/plain", "Dual sensor logging stopped");
-  Serial.println("HTTP: Dual sensor logging STOPPED - readings paused");
+  server.send(200, "text/plain", "Sensor logging stopped");
+  Serial.println("HTTP: Sensor logging STOPPED - readings paused");
 }
 
 void handleRelayOn() {

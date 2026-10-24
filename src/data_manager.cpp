@@ -5,10 +5,13 @@
 
 // CSV header. The first six columns are the original format; the rest were
 // appended so older analysis scripts that read by column name keep working.
+// temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
+// aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
 // Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
 const char CSV_HEADER[] PROGMEM =
     "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
-    "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd";
+    "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,"
+    "aux_temp,aux_adc,aux_v";
 
 static void printCsvHeader(File& f) {
   f.println(FPSTR(CSV_HEADER));
@@ -158,8 +161,10 @@ void writeBufferToFile() {
 
     float batchVoltageMin = 1.0, batchVoltageMax = 0.0, batchVoltageSum = 0.0;
     float batchTempMin = 999.0, batchTempMax = -999.0, batchTempSum = 0.0;
+    float batchAuxMin = 999.0, batchAuxMax = -999.0, batchAuxSum = 0.0;
     int batchCount = 0;
     int validTempCount = 0;
+    int validAuxCount = 0;
 
     // Write with frequent watchdog feeding and timeout checking
     for (int i = 0; i < readingsToWrite; i++) {
@@ -206,7 +211,22 @@ void writeBufferToFile() {
         dataFile.print(",");
         dataFile.print(pidKi, 3);
         dataFile.print(",");
-        dataFile.println(pidKd, 3);
+        dataFile.print(pidKd, 3);
+        // AUX Temp Sensor (channel 2), computed from the raw count
+        float aux = convertAuxThermistorToTemperature(readings[i].auxThermistorAdc);
+        dataFile.print(",");
+        dataFile.print(aux, 3);
+        dataFile.print(",");
+        dataFile.print(readings[i].auxThermistorAdc);
+        dataFile.print(",");
+        dataFile.println(thermistorAdcToVoltage(readings[i].auxThermistorAdc), 4);
+
+        if (aux > -50 && aux < 150) {
+            if (aux < batchAuxMin) batchAuxMin = aux;
+            if (aux > batchAuxMax) batchAuxMax = aux;
+            batchAuxSum += aux;
+            validAuxCount++;
+        }
 
         float v = readings[i].voltage;
         float t = readings[i].temperature;
@@ -255,11 +275,18 @@ void writeBufferToFile() {
     Serial.print("V, Avg="); Serial.print(batchVoltageSum / batchCount, 4); Serial.println("V");
 
     if (validTempCount > 0) {
-      Serial.print("  Temperature - Min="); Serial.print(batchTempMin, 2);
+      Serial.print(F("  PID Temp Sensor - Min=")); Serial.print(batchTempMin, 2);
       Serial.print("°C, Max="); Serial.print(batchTempMax, 2);
       Serial.print("°C, Avg="); Serial.print(batchTempSum / validTempCount, 2); Serial.println("°C");
     } else {
-      Serial.println("  Temperature - No valid readings (thermistor not connected?)");
+      Serial.println(F("  PID Temp Sensor - No valid readings (thermistor not connected?)"));
+    }
+    if (validAuxCount > 0) {
+      Serial.print(F("  AUX Temp Sensor - Min=")); Serial.print(batchAuxMin, 2);
+      Serial.print("°C, Max="); Serial.print(batchAuxMax, 2);
+      Serial.print("°C, Avg="); Serial.print(batchAuxSum / validAuxCount, 2); Serial.println("°C");
+    } else {
+      Serial.println(F("  AUX Temp Sensor - No valid readings (thermistor not connected?)"));
     }
     
     // Check if write took too long (warning threshold)
@@ -310,7 +337,7 @@ void clearDataFile() {
   bufferIndex = 0;
   bufferFull = false;
   totalReadings = 0;
-  Serial.println("Data cleared successfully - fresh CSV will contain only new dual sensor readings");
+  Serial.println("Data cleared successfully - fresh CSV will contain only new sensor readings");
 }
 
 void flushDataBuffer() {

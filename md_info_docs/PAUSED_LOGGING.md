@@ -7,7 +7,7 @@ Each boot also creates a new log file (`data.log`, `data_1.log`, ...). Runs from
 
 While logging is paused:
 - The web page still connects, and `/status` returns live readings
-- The PID controller can still run (it reads the thermistor directly)
+- The PID controller can still run (it reads the PID Temp Sensor directly)
 - The over-temperature check does **not** run, because it uses logged readings. Keep logging on whenever the heater is on.
 
 ## Workflow
@@ -35,12 +35,12 @@ At boot:
 ```
 DATA LOGGING IS PAUSED BY DEFAULT
    Click 'Start Logging' in web interface to begin
-   Voltage Channel 0, Temperature Channel 1
+   Voltage Channel 0, PID Temp Sensor Channel 1, AUX Temp Sensor Channel 2
 ```
 Start:
 ```
 HTTP: Start logging requested
-HTTP: Dual sensor logging STARTED - writing to data_3.log
+HTTP: Sensor logging STARTED - writing to data_3.log
 ```
 Stop:
 ```
@@ -50,8 +50,9 @@ Flushing remaining buffer to file...
 [WATCHDOG] Fed after file write completion
 Wrote 43 sensor readings to file in 210ms
   Voltage - Min=0.8180V, Max=0.8220V, Avg=0.8210V
-  Temperature - Min=44.70°C, Max=45.10°C, Avg=44.92°C
-HTTP: Dual sensor logging STOPPED - readings paused
+  PID Temp Sensor - Min=44.70°C, Max=45.10°C, Avg=44.92°C
+  AUX Temp Sensor - Min=43.95°C, Max=44.40°C, Avg=44.18°C
+HTTP: Sensor logging STOPPED - readings paused
 ```
 
 Logging also stops on its own if free heap drops below 8 KB, or on an emergency shutdown.

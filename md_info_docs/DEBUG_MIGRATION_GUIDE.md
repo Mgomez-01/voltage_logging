@@ -125,7 +125,7 @@ STARTUP_PRINTLN("OK");
 
 **BEFORE**:
 ```cpp
-Serial.println("=== DUAL SENSOR DEBUG STATS ===");
+Serial.println("=== SENSOR DEBUG STATS ===");
 Serial.print("Uptime: ");
 Serial.println(uptime);
 Serial.print("Free heap: ");
@@ -134,7 +134,7 @@ Serial.println(ESP.getFreeHeap());
 
 **AFTER**:
 ```cpp
-DEBUG_PRINTLN("=== DUAL SENSOR DEBUG STATS ===");
+DEBUG_PRINTLN("=== SENSOR DEBUG STATS ===");
 DEBUG_PRINT("Uptime: ");
 DEBUG_PRINTLN(uptime);
 DEBUG_PRINT("Free heap: ");
@@ -214,7 +214,7 @@ What category?
 - All emergency and error messages
 
 **Convert to DEBUG_PRINTLN**:
-- `"=== DUAL SENSOR DEBUG STATS ==="`
+- `"=== SENSOR DEBUG STATS ==="`
 - Uptime, free heap, buffer stats
 - General status information
 
