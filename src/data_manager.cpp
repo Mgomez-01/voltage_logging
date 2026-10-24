@@ -1,10 +1,9 @@
 #include "data_manager.h"
 #include "safety_system.h"
 
-// File system
-const char* DATA_FILE = "/sensor_data.csv";
+// File system (SD card)
 File dataFile;
-char logFileName[20];
+char logFileName[20] = "";  // Current log file; stays empty if the SD card was not ready at boot
 
 // Statistics for debugging
 unsigned long totalReadings = 0;
