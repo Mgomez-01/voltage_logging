@@ -1,253 +1,232 @@
-# ESP8266 Dual Sensor Logger - Voltage + Temperature
+# ESP8266 Voltage + Temperature Logger with SD Card and PWM Heater Control
 
-A professional-grade dual sensor data logging system using ESP8266 with CD74HC4067 multiplexer for simultaneous voltage and temperature monitoring.
+A data logger built on the ESP8266. It reads a voltage and a 100k NTC thermistor through a CD74HC4067 analog multiplexer, logs both to a microSD card, and drives a heater through a MOSFET with a PWM PID controller. Everything is controlled from a web page served over the ESP8266's own WiFi access point.
 
-## 🌟 Features
+## Features
 
-- **Dual Sensor Logging**: Voltage and temperature simultaneously
-- **Fast Sampling**: 500Hz per sensor (1000Hz total) with time-multiplexed reading
-- **Real-time Web Interface**: Live dual sensor display with interactive charts
-- **Data Persistence**: Stores readings to LittleFS filesystem, survives power cycles  
-- **WiFi Access Point**: Creates its own WiFi network for easy connection
-- **WebSocket Communication**: Real-time updates without page refresh
-- **Controlled Logging**: Start/stop data collection on demand
-- **CSV Export**: Download timestamped dual sensor data
-- **Advanced Statistics**: Live min/max/average for both sensors
-- **Responsive Design**: Works on desktop and mobile browsers
-- **Hardware Expandable**: CD74HC4067 supports up to 16 analog sensors
+- **Dual sensor logging**: voltage (mux channel 0) and temperature (mux channel 1)
+- **SD card storage**: CSV-formatted log files on a microSD card, a new file every boot, automatic rotation at 50 MB
+- **Log file manager**: list, download and delete log files from the web page
+- **PWM heater control**: AOD4144 N-channel MOSFET driven at 0-100% duty from GPIO16
+- **PID temperature control**: runs every 500 ms, independent of data logging
+- **Real-time web interface**: WebSocket updates, live charts and statistics
+- **WiFi access point**: no router needed
+- **Safety system**: over-temperature, sensor-fault and max-runtime shutdown, software and hardware watchdogs, SD write timeouts, low-memory guard, and a web "System Reset" to recover
 
-## 📊 Sensor Capabilities
+## Hardware
 
-### **Voltage Measurement (Channel 0)**
-- **Range**: 0-1V (configurable with voltage dividers)
-- **Resolution**: 10-bit ADC (1024 levels)
-- **Accuracy**: ±0.01V
-- **Sample Rate**: 500Hz
+### Core components
+- **ESP8266 board**: NodeMCU v2 or Wemos D1 mini (ESP-12E/F)
+- **CD74HC4067** 16-channel analog multiplexer
+- **microSD card module** (SPI, 3.3 V) or Wemos D1 mini micro-SD shield, with a FAT16/FAT32-formatted card (Class 10 or faster recommended)
+- **100 kΩ resistor** for the thermistor divider
 
-### **Temperature Measurement (Channel 1)**  
-- **Sensor**: 100kΩ NTC Thermistor (Ender 3 compatible)
-- **Range**: -40°C to +125°C
-- **Resolution**: 0.1°C
-- **Accuracy**: ±1°C (with calibration)
-- **Sample Rate**: 500Hz
-- **Conversion**: Steinhart-Hart equation for precision
+### Sensors
+- **Voltage source** to measure (0-1 V scale in software, see Notes)
+- **100 kΩ NTC thermistor**, β = 3950 K (Ender 3 compatible)
 
-## Hardware Requirements
+### Heater
+- **AOD4144** N-channel logic-level MOSFET (low-side switch)
+- **10 kΩ** gate pull-down resistor
+- **12 V heater element** and a 12 V supply
 
-### **Core Components**
-- **ESP8266MOD board** (NodeMCU, Wemos D1 Mini, or similar)
-- **CD74HC4067** 16-channel analog multiplexer (~$2-3)
-- **100kΩ resistor** (for thermistor voltage divider)
-
-### **Sensors**
-- **Voltage source** to measure (0-1V range, expandable with voltage dividers)
-- **100kΩ NTC thermistor** (Ender 3 printer compatible, β=3950K)
-
-### **Optional**
-- **Breadboard and jumper wires** for prototyping
-- **Pull-up resistors** if using longer cable runs
-- **Capacitors** for noise filtering in high-EMI environments
-
-## 🔌 Wiring Overview
+## Wiring Overview
 
 ```
-ESP8266 → CD74HC4067
-├─ A0 → COM (analog output)
-├─ D1 → S0 (channel select bit 0)
-├─ D2 → S1 (channel select bit 1)
-├─ D3 → S2 (channel select bit 2)
-├─ D4 → S3 (channel select bit 3)
-├─ 3.3V → VCC + EN
-└─ GND → GND
+ESP8266        Connected to          Function
+-------        ------------          --------
+A0             Mux COM               Analog input
+D0 (GPIO16)    MOSFET gate           Heater PWM
+D1 (GPIO5)     Mux S0                Channel select bit 0
+D2 (GPIO4)     Mux S1                Channel select bit 1
+D3 (GPIO0)     Mux S2                Channel select bit 2
+D4 (GPIO2)     Mux S3                Channel select bit 3
+D5 (GPIO14)    SD SCK                SPI clock
+D6 (GPIO12)    SD MISO               SPI data in
+D7 (GPIO13)    SD MOSI               SPI data out
+D8 (GPIO15)    SD CS                 SPI chip select
+3V3            Mux VCC + EN, SD VCC, thermistor divider
+GND            Mux, SD, MOSFET source, 12 V supply ground
 
-Sensors → CD74HC4067
-├─ C0 → Voltage sensor (0-1V)
-└─ C1 → Thermistor circuit:
-    3.3V ─── [100kΩ] ─── C1 ─── [Thermistor] ─── GND
+Mux channels:
+  C0 -> voltage source
+  C1 -> 3.3V --[100k]-- C1 --[NTC]-- GND
 ```
 
-**📄 See [WIRING_GUIDE.md](WIRING_GUIDE.md) for detailed connection diagrams**
+See [WIRING_GUIDE.md](WIRING_GUIDE.md) for the full diagram, heater circuit and checks.
 
-## Software Requirements
+## Software Setup
 
-### Arduino IDE Libraries
-
-Install these libraries through the Arduino IDE Library Manager:
-
-1. **ESP8266WiFi** (usually included with ESP8266 board package)
-2. **ESP8266WebServer** (usually included with ESP8266 board package)  
-3. **WebSocketsServer** by Markus Sattler
-4. **ArduinoJson** by Benoit Blanchon
-
-### ESP8266 Board Package
-
-1. In Arduino IDE, go to File → Preferences
-2. Add this URL to "Additional Board Manager URLs":
-   ```
-   http://arduino.esp8266.com/stable/package_esp8266com_index.json
-   ```
-3. Go to Tools → Board → Board Manager
-4. Search for "ESP8266" and install the ESP8266 Community package
-
-## 🚀 Quick Start
-
-**You can test the software immediately** - it works with or without the CD74HC4067:
-
-### **Method 1: PlatformIO (Recommended)**
+### PlatformIO (recommended)
 ```bash
 pip install platformio
-cd voltage_logger
-make deploy
+make deploy                   # build + upload firmware + upload web page + open monitor (NodeMCU)
+make deploy ENV=wemos_d1_mini # same for a Wemos D1 mini
 ```
 
-### **Method 2: Arduino CLI**
+Or step by step:
 ```bash
-# Install Arduino CLI and ESP8266 core
-arduino-cli core install esp8266:esp8266
-arduino-cli lib install "ArduinoJson" "WebSockets"
-
-# Compile and upload
-arduino-cli compile --fqbn esp8266:esp8266:generic src/main.cpp
-arduino-cli upload -p /dev/ttyUSB0 --fqbn esp8266:esp8266:generic
+pio run -e esp8266 -t upload       # firmware (use -e wemos_d1_mini for a D1 mini)
+pio run -e esp8266 -t uploadfs     # web page template (data/ folder)
+pio device monitor -b 115200
 ```
 
-## 🌐 Usage Instructions
+Both steps are needed: the firmware and the web page are uploaded separately.
 
-### **1. Connect to WiFi**
-- **Network**: `ESP8266_VoltageLogger`
-- **Password**: `voltage123`
-- **IP Address**: `192.168.4.1`
+### Libraries
+- ESP8266 Arduino core (ESP8266WiFi, ESP8266WebServer, SD, SPI, LittleFS, Ticker)
+- ArduinoJson ^7.0.0
+- WebSockets ^2.4.0 (Markus Sattler)
 
-### **2. Open Web Interface**
-- Open browser to: `http://192.168.4.1`
-- **Status**: Should show "PAUSED" (logging starts paused)
+PlatformIO installs the two external libraries automatically from `platformio.ini`.
 
-### **3. Start Data Collection**
-- **Click "▶ Start Logging"** when ready to collect data
-- **Watch live readings**: Voltage and temperature update in real-time
-- **Monitor statistics**: Min/max/average for both sensors
+### What the two storage areas hold
+| Storage | Holds | How it gets there |
+|---|---|---|
+| **microSD card** | All sensor data logs (`data*.log`) | Written by the firmware while logging |
+| Internal flash (LittleFS) | Only the web page template (`data/index.template.html`) | `pio run -t uploadfs` / `make filesystem` |
 
-### **4. Download Data**
-- **Click "Download Data"** for CSV export
-- **Format**: `timestamp,voltage,temperature`
-- **Example**: `1234,0.8213,23.45`
+Sensor data is never stored in internal flash.
 
-## Web Interface
+## Usage
 
-The web interface provides:
+1. **Insert the SD card** and power the board. The serial monitor should show `SD card initialized.` and `Created new data file: data_N.log`.
+2. **Connect to WiFi**: SSID `ESP8266_VoltageLogger`, password `voltage123`.
+3. **Open** `http://192.168.4.1`.
+4. **Start Logging**. Logging is paused at boot. If the SD card wasn't ready at boot, Start Logging tries to set it up again and shows an error if it still can't create a log file.
+5. **Heater control** (optional):
+   - Set the target temperature (0-130 °C, default 45 °C)
+   - Enable PID, or use manual ON (100%) / OFF (0%)
+   - Keep logging running while the heater is on (see Safety)
+6. **Stop Logging** to flush the RAM buffer to the card.
+7. **Download Data** gets the current log file. The **Log Files on SD Card** panel lists every file so you can download or delete them individually.
 
-- **Current Reading**: Large display of current voltage
-- **Statistics**: Min, Max, Average, and Sample Count
-- **Real-time Chart**: Scrolling plot of voltage vs time (last 500 points)
-- **Data Log**: Text log of all readings with timestamps
-- **Controls**:
-  - Download Data: Get CSV file of all stored readings
-  - Clear Data: Reset all stored data
-  - Pause/Resume: Temporarily stop logging new data
+## Data Format
+
+Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... When a file reaches 50 MB, logging continues in the next free name. The files are CSV text:
+
+```csv
+timestamp,voltage,temperature,heater_state,target_temp,pid_output
+120004,0.822266,43.812,1,45.00,31.47
+120008,0.823242,43.815,1,45.00,31.47
+```
+
+| Column | Unit | Description |
+|---|---|---|
+| timestamp | ms | `millis()` since boot, taken at the thermistor sample |
+| voltage | V | Channel 0, ADC/1024 (6 decimals) |
+| temperature | °C | Channel 1 thermistor (3 decimals, -999 = open/short) |
+| heater_state | 0/1 | 1 if heater PWM duty > 0 |
+| target_temp | °C | PID setpoint |
+| pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
+
+At the maximum rate this is about 38 bytes × 250 rows/s ≈ 34 MB per hour, so a new 50 MB file starts about every 1.5 hours.
 
 ## Technical Details
 
-### Sampling Rate
-- ADC sampled every 1ms (1000 Hz)
-- Web updates every 100ms (10 Hz) for smooth display
-- Buffer size: 100 readings before writing to file
+### Sampling
+- One ADC read every 2 ms, alternating channels: up to 250 readings/s per channel and 250 CSV rows/s
+- 50-row RAM buffer, appended to the SD card when full
+- WebSocket update every 500 ms
+- Real rates are a little lower because sampling pauses during SD writes and the 1 s debug print
+- Logging stops automatically if free heap drops below 8 KB
 
-### Data Storage
-- Uses SPIFFS filesystem on ESP8266 flash memory
-- Data stored in CSV format: `timestamp,voltage`
-- Persists across power cycles and resets
-- Automatic file creation and management
+### SD card writes
+- Each write opens the file, checks its size (rotating at 50 MB), appends the buffered rows and closes the file
+- A write is abandoned after 5 s. The watchdog is fed every 5 rows so slow cards don't trip it.
+- Slow cards are reported in the serial monitor (> 1 s open/close, > 2 s total). See [SD_WRITE_TIMEOUT_FIX.md](SD_WRITE_TIMEOUT_FIX.md).
 
-### Network Configuration
-- **Access Point Mode**: ESP8266 creates its own WiFi network
-- **IP Address**: 192.168.4.1 (default AP gateway)
-- **WebSocket Port**: 81 (for real-time communication)
-- **HTTP Port**: 80 (for web interface)
+### Heater / PID
+| Setting | Value |
+|---|---|
+| PWM pin / range | GPIO16 (D0), 0-1000 (0.1%) |
+| PWM frequency | 32 Hz (`analogWriteFreq(32)`). The core docs list 100 Hz as the minimum, but core 3.1.2's default PWM engine uses 32 Hz. |
+| Kp / Ki / Kd | 2.2 / 0.25 / 0.15 |
+| PID interval | 500 ms |
+| Integral clamp | ±100 (±25% output) |
+| Default target | 45 °C |
+| Max safe temperature | 130 °C |
+| Max continuous heater time | 30 min |
 
-### Memory Management
-- Circular buffer prevents memory overflow
-- Chart limited to 500 points for browser performance
-- Log display limited to 1000 entries
-- Automatic cleanup of old data
+The PID uses the latest logged temperature, or reads the thermistor directly when the buffer is empty, so it works with logging on or off. Its output (0-100%) sets the PWM duty directly.
 
-## Customization
+### Safety
+- Over-temperature (> 130 °C) and sensor-fault shutdown. These checks use the latest logged reading, so they only run while logging is on. Keep logging running whenever the heater is on.
+- 30-minute continuous-heating limit (Ticker, every 500 ms). Under PID the duty rarely drops to 0%, so a long hold will reach this limit.
+- Software watchdog (checked every 8 s) + ESP hardware watchdog
+- Logging auto-stops when free heap < 8 KB
+- On shutdown the heater PWM goes to 0, PID and logging stop, and any open log file is closed
+- After a shutdown, use **System Reset** (`/system/reset`). It is refused if the temperature is ≥ 120 °C or the sensor is faulty. It also clears the RAM buffer so old readings can't re-trigger a shutdown. See [RESET_BUFFER_FIX.md](RESET_BUFFER_FIX.md).
 
-### Voltage Range
-To change the voltage range, modify this line in the code:
-```cpp
-float voltage = (adcValue / 1024.0); // Currently 0-1V
+### Network / API
+| Route | Action |
+|---|---|
+| `/` | Web page |
+| `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
+| `/status` | One-shot JSON reading and settings |
+| `/logs` | JSON list of log files `{name, size}` |
+| `/data.csv` | Download the current log file (flushes the RAM buffer first) |
+| `/data.csv?file=<name>` | Download a specific log file |
+| `/logs/delete?file=<name>` | Delete a log file |
+| `/clear` | Delete all `data*.log` files and start a new `data.log` |
+| `/relay/on`, `/relay/off` | Manual heater 100% / 0% (names kept from the relay version) |
+| `/temp/set?temp=X` | Set target temperature |
+| `/pid/enable`, `/pid/disable` | PID on/off |
+| `/pid/params?kp=&ki=&kd=` | Set PID gains |
+| `/heater/status` | Heater/PID JSON |
+| `/system/reset` | Clear emergency shutdown |
+
+HTTP on port 80, WebSocket on port 81, AP IP 192.168.4.1.
+
+## Code Layout
+
+```
+src/
+├── main.cpp               # setup(), loop(), sensor sampling, debug stats
+├── sensor_manager.*       # mux control, thermistor conversion
+├── data_manager.*         # RAM buffer, SD card, log files, rotation, write timeouts
+├── heater_controller.*    # PWM output, PID, heater safety checks
+├── safety_system.*        # Ticker safety check, watchdog, emergency shutdown
+├── web_interface.*        # HTTP routes, WebSocket, page templating
+├── wifi_manager.*         # access point
+└── debug_config.h         # centralized debug macros (not used yet, see DEBUG_MIGRATION_GUIDE.md)
+data/
+└── index.template.html    # web page (uploaded to LittleFS)
+config.h                   # reference of key settings (not compiled in)
 ```
 
-For 0-3.3V range:
-```cpp
-float voltage = (adcValue / 1024.0) * 3.3;
-```
-
-### Sampling Rate
-Adjust these constants:
-```cpp
-const unsigned long SAMPLE_INTERVAL = 1; // ADC sampling (ms)
-const unsigned long WEB_UPDATE_INTERVAL = 100; // Web updates (ms)
-```
-
-### WiFi Credentials
-Change these constants:
-```cpp
-const char* ssid = "ESP8266_VoltageLogger";
-const char* password = "voltage123";
-```
-
-### Buffer Size
-Modify for different memory usage:
-```cpp
-const int BUFFER_SIZE = 100; // Number of readings before file write
-```
+Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_interface.cpp` each define their own `DEBUG_*` flags.
 
 ## Troubleshooting
 
-### Upload Issues
-- Check that correct board and port are selected
-- Try holding FLASH button during upload if available
-- Ensure ESP8266 board package is properly installed
+### "SD card initialization failed" / "SD card not found"
+- Check the SPI wiring: CS=D8, MOSI=D7, MISO=D6, SCK=D5, VCC=3.3 V
+- Format the card FAT32 (or FAT16 for ≤ 2 GB)
+- Make sure the module works at 3.3 V
+- If the board won't boot with the SD module attached, D8 (GPIO15) must be LOW at power-up
+- If the card wasn't ready at boot, insert it and press Start Logging, or reboot
 
-### WiFi Connection Issues
-- Look for the access point name in WiFi settings
-- Default IP is always 192.168.4.1 in AP mode
-- Try different devices if connection fails
+### "Slow SD write" or "Write timeout" in the serial monitor
+- Use a faster card (Class 10 / UHS-1) and reformat it FAT32
 
-### Web Interface Issues
-- Clear browser cache and refresh
-- Check JavaScript console for errors
-- Try different browser (Chrome recommended)
+### Web page doesn't load or says "Template file not found"
+- The web page lives in internal flash. Run `make filesystem` (`pio run -t uploadfs`).
 
-### Data Issues
-- If data isn't persisting, SPIFFS may not be initialized
-- Check Serial Monitor for SPIFFS error messages
-- Try clearing data and starting fresh
+### Heater doesn't turn on
+- Check the MOSFET: source to GND, drain to heater (-), heater (+) to 12 V
+- Measure the gate: ~3.3 V at 100% duty
+- Check for an active emergency shutdown in the serial monitor, and use System Reset
 
-## Serial Monitor Output
+### Temperature reads N/A or -999
+- Check the thermistor divider on C1 (~1.65 V at room temperature)
 
-Connect to ESP8266 at 115200 baud to see:
-- Startup messages
-- WiFi configuration details
-- WebSocket connection status
-- Error messages and debugging info
+For PlatformIO install/build problems, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-## File Structure
+## Notes
 
-```
-voltage_logger/
-├── voltage_logger.ino    # Main Arduino sketch
-├── README.md            # This documentation
-└── libraries.txt        # Required library list
-```
-
-## Performance Notes
-
-- Maximum practical sampling rate depends on WiFi activity
-- Chart performance may degrade with very long sessions
-- Browser memory usage grows with session length
-- Recommend sessions under 1 hour for best performance
+- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.3 V, so the logged value is the actual voltage ÷ 3.3. The thermistor conversion already assumes 0-3.3 V.
+- Timestamps restart at 0 on each boot. Each boot also starts a new log file.
+- Several `.md` files are change notes from earlier versions (relay control, internal-flash logging). Each starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current firmware.
 
 ## License
 
