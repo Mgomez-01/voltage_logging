@@ -9,7 +9,7 @@ extern const int HEATER_PWM_PIN; // GPIO16 (D0) for PWM control of MOSFET
 extern bool heaterEnabled;
 extern float heaterDutyCycle; // Current PWM duty cycle (0-100%)
 extern unsigned long heaterStartTime; // Time when heater was enabled
-extern const unsigned long MAX_HEATER_TIME; // 10 min safety timeout
+extern const unsigned long MAX_HEATER_TIME; // 30 min continuous-heating limit
 extern const float MAX_SAFE_TEMPERATURE; // Maximum safe temperature in °C
 
 // PWM configuration
