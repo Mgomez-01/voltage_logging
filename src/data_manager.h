@@ -11,13 +11,12 @@ struct SensorReading {
   float voltage;
   float temperature;
   int currentChannel; // Which channel was being sampled
-  bool heaterState;   // Heater relay state
-  float pidValue;     // PID controller output
+  bool heaterState;   // True if heater PWM duty > 0
+  float pidValue;     // Heater PWM duty cycle (0-100%), logged as pid_output
   float targetTemp;   // Target temperature at time of reading
 };
 
-// File system
-extern const char* DATA_FILE;
+// File system (SD card)
 extern File dataFile;
 extern char logFileName[20];
 
