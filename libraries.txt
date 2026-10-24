@@ -1,31 +1,30 @@
-# Required Arduino Libraries for ESP8266 Voltage Logger
+# Libraries used by the ESP8266 Voltage + Temperature Logger
 
-Install these libraries through the Arduino IDE Library Manager:
+PlatformIO installs everything automatically from platformio.ini.
+This list is for reference or for a manual Arduino IDE / Arduino CLI build.
 
-## Core Libraries (usually included with ESP8266 board package):
-- ESP8266WiFi
-- ESP8266WebServer  
-- FS (SPIFFS filesystem support)
+## From the ESP8266 Arduino core (no separate install)
+- ESP8266WiFi        - WiFi access point
+- ESP8266WebServer   - HTTP server (port 80)
+- SD + SPI           - microSD card log files
+- LittleFS           - internal flash; holds only the web page template
+- Ticker             - timer-based safety checks and watchdog
 
-## Additional Libraries to Install:
-1. **WebSocketsServer** by Markus Sattler
-   - Version: Latest stable
-   - Used for real-time communication between ESP8266 and web browser
+## External libraries
+1. ArduinoJson by Benoit Blanchon
+   - Version 7.x (platformio.ini: ArduinoJson@^7.0.0)
+   - The code uses the v7 JsonDocument API, so 6.x will not compile
+2. WebSockets by Markus Sattler (links2004)
+   - Version 2.4.x or newer (platformio.ini: WebSockets@^2.4.0)
+   - Provides WebSocketsServer (port 81)
 
-2. **ArduinoJson** by Benoit Blanchon  
-   - Version: 6.x (latest stable)
-   - Used for JSON data formatting in WebSocket messages
+## ESP8266 board package (Arduino IDE only)
+- Board Manager URL: http://arduino.esp8266.com/stable/package_esp8266com_index.json
+- Install "esp8266" by ESP8266 Community
+- Board: NodeMCU 1.0 (ESP-12E Module) or LOLIN(WEMOS) D1 mini
 
-## Installation Steps:
-
-1. Open Arduino IDE
-2. Go to Tools → Manage Libraries...
-3. Search for each library name
-4. Click "Install" for the latest stable version
-
-## ESP8266 Board Package:
-- Add to Board Manager URLs: http://arduino.esp8266.com/stable/package_esp8266com_index.json
-- Install "ESP8266" by ESP8266 Community
-
-## Verification:
-After installation, you should be able to compile the voltage_logger.ino sketch without errors.
+## Notes for Arduino IDE users
+- The firmware is split across several files in src/ (main.cpp plus modules),
+  so copy the whole src/ folder into the sketch folder
+- The web page (data/index.template.html) must also be uploaded to LittleFS
+  with the LittleFS upload tool
