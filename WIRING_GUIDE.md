@@ -82,7 +82,7 @@ C3-C15  | Free for more analog sensors
 - 100 kΩ at 25 °C, β = 3950 K (Ender 3 type)
 - 100 kΩ series resistor to 3.3 V (measures 98 kΩ on this board; `SERIES_RESISTOR` = 98000)
 - Used by the PID and by the over-temperature / sensor-fault safety checks
-- Firmware constants (`src/sensor_manager.cpp`): `THERMISTOR_NOMINAL`, `TEMPERATURE_NOMINAL`, `B_COEFFICIENT`, `SERIES_RESISTOR`
+- Firmware constants (`src/sensor_manager.cpp`): `THERMISTOR_NOMINAL`, `TEMPERATURE_NOMINAL`, `B_COEFFICIENT`, `SERIES_RESISTOR`. Calibrated: R25 = 97 886 Ω, B = 3910 (see README.md, "Calibration")
 - High divider impedance (~50 kΩ), so the board's 320 kΩ A0 load pulls the sampled voltage ~14 % low. The firmware models this; see "A0 load and full scale" below.
 
 ### AUX Temp Sensor: MF55 Ultra-Thin 10k NTC Thermistor (C2)
@@ -90,8 +90,8 @@ C3-C15  | Free for more analog sensors
 - 2.0 kΩ series resistor to 3.3 V, chosen for resolution around 60-70 °C (the NTC is ~2.5-1.8 kΩ there): ~9 ADC counts per °C. Anything from 2.0 kΩ to 2.7 kΩ gives about the same resolution at 60-65 °C.
 - Self-heating: with 2.0 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can read up to ~1.9 °C high in still air, and less when pressed flat against a surface. 2.7 kΩ cuts this by about a quarter.
 - Second sensor at a different location, for redundancy and sanity checks. It is logged and displayed but **not** used by the PID or the safety checks.
-- Firmware constants (`src/sensor_manager.cpp`): `AUX_THERMISTOR_NOMINAL`, `AUX_TEMPERATURE_NOMINAL`, `AUX_B_COEFFICIENT`, `AUX_SERIES_RESISTOR`. `AUX_SERIES_RESISTOR` must match the resistor fitted (measured 2.00 kΩ). Use 3435 for `AUX_B_COEFFICIENT` if the part is a 103F3435.
-- Near 0 °C this divider sits close to the ADC ceiling (~997 of 1024 counts) with only ~3 counts per °C, so small ADC gain errors show up as several degrees there. That makes an ice bath a sensitive calibration point. It reads -999 below about -11 °C, where the ADC clips.
+- Firmware constants (`src/sensor_manager.cpp`): `AUX_THERMISTOR_NOMINAL`, `AUX_TEMPERATURE_NOMINAL`, `AUX_B_COEFFICIENT`, `AUX_SERIES_RESISTOR`. `AUX_SERIES_RESISTOR` must match the resistor fitted (measured 2.00 kΩ). Calibrated: R25 = 10 631 Ω, B = 4096. For a different part (e.g. a 103F3435), start from its datasheet values and recalibrate.
+- Near 0 °C this divider sits close to the ADC ceiling (~997 of 1024 counts) with only ~3 counts per °C, so small ADC gain errors show up as several degrees there. That makes an ice bath a sensitive calibration point (it read 1002.5 counts in the calibration ice bath). It reads -999 below about -11 °C, where the ADC clips.
 
 ### A0 load and full scale (NodeMCU / D1 mini)
 The board routes A0 through a 220k/100k divider to the ESP8266's 1.0 V ADC:
@@ -99,7 +99,7 @@ The board routes A0 through a 220k/100k divider to the ESP8266's 1.0 V ADC:
 - A0 presents a **320 kΩ** load to whichever divider the mux selects (`ADC_INPUT_RESISTANCE`)
 - The thermistor rail measures **3.32 V** (`THERMISTOR_SUPPLY_VOLTAGE`)
 
-The conversion removes the load, so the NTC resistance it calculates is the real one. If you add a filter capacitor on C1 or C2, the node no longer sees the full load at the moment of the sample: set `ADC_INPUT_RESISTANCE` to ~960000 and recalibrate. `ADC_CALIBRATION_GAIN` (1.0 by default) scales the A0 voltage once it has been calibrated against a reference such as an ice bath.
+The conversion removes the load, so the NTC resistance it calculates is the real one. If you add a filter capacitor on C1 or C2, the node no longer sees the full load at the moment of the sample: set `ADC_INPUT_RESISTANCE` to ~960000 and recalibrate. `ADC_CALIBRATION_GAIN` stays at 1.0. Calibration is done per sensor through R25 and B (README.md, "Calibration"), and changing the gain would invalidate it.
 
 Open-sensor detection: a disconnected PID thermistor leaves the 98 kΩ / 320 kΩ divider, ~2.54 V (ADC ~813), not the rail. The firmware treats an NTC resistance above 20 × R25 (colder than about -30 °C) as open and returns -999, which trips the sensor-fault shutdown when the heater is on.
 
@@ -149,15 +149,15 @@ PWM control via MOSFET (AOD4144) for smooth heater power regulation
 A0 pin number: 17
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V
-Channel 1 (PID Temp Sensor): 465 -> 24.97°C
-Channel 2 (AUX Temp Sensor): 881 -> 24.96°C
+Channel 1 (PID Temp Sensor): 460 -> 25.05°C
+Channel 2 (AUX Temp Sensor): 889 -> 25.08°C
 ...
 Initializing data file... SD card initialized.
 Created new data file: data_3.log
 OK
 ```
 
-(ADC 465 and 881 are the nearest counts to 25 °C for this board: 98 kΩ / 100k NTC and 2.0 kΩ / 10k NTC dividers on a 3.32 V rail, with the 320 kΩ A0 load and 3.2 V full scale. Expect a few counts of difference until `ADC_CALIBRATION_GAIN` is calibrated. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
+(ADC 460 and 889 are the nearest counts to 25 °C for this board with the calibrated thermistor constants: 98 kΩ and 2.0 kΩ dividers on a 3.32 V rail, with the 320 kΩ A0 load and 3.2 V full scale. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
 
 ## Troubleshooting
 
@@ -190,5 +190,5 @@ OK
 - Voltage resolution: 10-bit (~1 mV per step on the 0-1 V scale)
 - PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
 - AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
-- Temperature accuracy: ±1 °C after calibration
+- Temperature accuracy: approximately ±1.5–2 °C after calibration (ESP8266 ADC non-linearity; see README.md, "Calibration")
 - Logging: 50-row buffer written to the SD card, ~91 bytes per row (16 columns). A new 50 MB file about every 55 min at the full rate.

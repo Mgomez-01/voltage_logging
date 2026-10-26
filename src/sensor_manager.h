@@ -24,15 +24,15 @@ extern const float ADC_INPUT_RESISTANCE;      // 320k board divider loading the 
 extern const float ADC_CALIBRATION_GAIN;      // Calibration multiplier for the A0 voltage (1.0 = uncalibrated)
 
 // PID Temp Sensor configuration (channel 1)
-extern const float THERMISTOR_NOMINAL;   // 100k ohm at 25°C
+extern const float THERMISTOR_NOMINAL;   // R25, calibrated (datasheet 100k)
 extern const float TEMPERATURE_NOMINAL;  // 25°C
-extern const float B_COEFFICIENT;        // Beta coefficient for typical 100k thermistor
+extern const float B_COEFFICIENT;        // Beta, calibrated (datasheet 3950)
 extern const float SERIES_RESISTOR;      // Series resistor (measured 98k)
 
 // AUX Temp Sensor configuration (channel 2)
-extern const float AUX_THERMISTOR_NOMINAL;   // 10k ohm at 25°C
+extern const float AUX_THERMISTOR_NOMINAL;   // R25, calibrated (datasheet 10k)
 extern const float AUX_TEMPERATURE_NOMINAL;  // 25°C
-extern const float AUX_B_COEFFICIENT;        // 3950
+extern const float AUX_B_COEFFICIENT;        // Beta, calibrated (datasheet 3950)
 extern const float AUX_SERIES_RESISTOR;      // 2.0k series resistor
 
 // Current sensor channel being read

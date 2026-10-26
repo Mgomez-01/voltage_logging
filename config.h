@@ -49,8 +49,8 @@
 //   ADC_INPUT_RESISTANCE      = 320000.0 ohm, that divider loading the selected
 //                                        channel (use ~960000 if a filter
 //                                        capacitor is added on C1/C2)
-//   ADC_CALIBRATION_GAIN      = 1.0      multiplier on the A0 voltage; set from
-//                                        the ice bath / reference calibration
+//   ADC_CALIBRATION_GAIN      = 1.0      multiplier on the A0 voltage; leave at
+//                                        1.0 (calibration is per sensor, R25/B)
 //   Conversion: V = adc/1024 * 3.2 * gain
 //               P = Rs * V / (VS - V);  R = P * RL / (RL - P)
 //               1/T = 1/(T25 + 273.15) + ln(R/R25)/B
@@ -58,18 +58,22 @@
 //   (open: a disconnected PID NTC reads ~2.54 V because of the 320k load)
 //
 // PID Temp Sensor (100k NTC, Beta equation)
-//   THERMISTOR_NOMINAL  = 100000.0  ohm at 25 C (R25; keep the datasheet value)
+//   THERMISTOR_NOMINAL  = 97886.0   ohm at 25 C (R25, fitted; datasheet 100000)
 //   TEMPERATURE_NOMINAL = 25.0      C
-//   B_COEFFICIENT       = 3950.0
+//   B_COEFFICIENT       = 3910.0    (fitted; datasheet 3950)
 //   SERIES_RESISTOR     = 98000.0   ohm, measured (VS -- R -- C1 -- NTC -- GND)
 //
 // AUX Temp Sensor (MF55 ultra-thin 10k NTC, Beta equation)
-//   AUX_THERMISTOR_NOMINAL  = 10000.0  ohm at 25 C
+//   AUX_THERMISTOR_NOMINAL  = 10631.0  ohm at 25 C (R25, fitted; datasheet 10000)
 //   AUX_TEMPERATURE_NOMINAL = 25.0     C
-//   AUX_B_COEFFICIENT       = 3950.0   (B25/50; use 3435 for a 103F3435 part)
+//   AUX_B_COEFFICIENT       = 4096.0   (fitted; datasheet B25/50 3950)
 //   AUX_SERIES_RESISTOR     = 2000.0   ohm, measured (VS -- R -- C2 -- NTC -- GND)
 //                             Must match the resistor fitted. ~9 counts/C at
 //                             60-70 C; 2.0k-2.7k give about the same.
+//
+// Calibration (2026-10-25): R25/B fitted from ice bath 0 C (PID 660.8, AUX
+// 1002.5 counts) and boiling water 95.7 C at ~1300 m, SLC (PID 77.7, AUX 293.1).
+// Refit with tools/calibrate_thermistors.py.
 
 // =============================================================================
 // DATA LOGGING - SD CARD (src/data_manager.cpp)

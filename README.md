@@ -24,8 +24,8 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 
 ### Sensors
 - **Voltage source** to measure (0-1 V scale in software, see Notes)
-- **PID Temp Sensor**: 100 kΩ NTC thermistor, β = 3950 K (Ender 3 compatible)
-- **AUX Temp Sensor**: MF55 ultra-thin 10 kΩ NTC thermistor, β = 3950 K (B25/50)
+- **PID Temp Sensor**: 100 kΩ NTC thermistor, β = 3950 K (Ender 3 compatible). Calibrated: R25 = 97.89 kΩ, B = 3910
+- **AUX Temp Sensor**: MF55 ultra-thin 10 kΩ NTC thermistor, β = 3950 K (B25/50). Calibrated: R25 = 10.63 kΩ, B = 4096
 
 The AUX series resistor is sized for resolution around 60-70 °C, where the 10k NTC measures about 2.5-1.8 kΩ. That gives ~9 ADC counts per °C (~0.11 °C per count); anything from 2.0 kΩ to 2.7 kΩ gives about the same there. With ~2 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can warm it by up to ~1.9 °C in still air (0.7 mW/°C), and less when it is pressed against a surface. A 2.7 kΩ resistor cuts that by about a quarter. `AUX_SERIES_RESISTOR` in `src/sensor_manager.cpp` must match the resistor fitted.
 
@@ -36,7 +36,27 @@ Both dividers run from the 3.3 V rail (measured 3.32 V). On NodeMCU / D1 mini bo
 
 Before this was modelled, the PID Temp Sensor read ~5 °C hot and the AUX Temp Sensor ~4 °C cold at room temperature. With it, they agree to within a few hundredths of a °C at room temperature.
 
-The circuit constants are in `src/sensor_manager.cpp`: `THERMISTOR_SUPPLY_VOLTAGE` (3.32), `ADC_FULL_SCALE_VOLTAGE` (3.2), `ADC_INPUT_RESISTANCE` (320000), the measured series resistors, and `ADC_CALIBRATION_GAIN` (1.0 until calibrated against a reference such as an ice bath). Keep `THERMISTOR_NOMINAL` / `AUX_THERMISTOR_NOMINAL` at the datasheet R25 values (100 kΩ / 10 kΩ). A thermistor measuring 104.5 kΩ or 10.41 kΩ is simply at ~24 °C, not off-spec.
+The circuit constants are in `src/sensor_manager.cpp`: `THERMISTOR_SUPPLY_VOLTAGE` (3.32), `ADC_FULL_SCALE_VOLTAGE` (3.2), `ADC_INPUT_RESISTANCE` (320000), the measured series resistors, and `ADC_CALIBRATION_GAIN` (leave at 1.0).
+
+### Calibration
+Each thermistor's R25 and B are fitted from two reference points in stirred water, with both sensors suspended mid-depth: an ice bath (0 °C) and boiling water (95.7 °C, the boiling point at Salt Lake City's ~1300 m). The fitted values are in `src/sensor_manager.cpp`, with the datasheet values in comments:
+
+| Sensor | Ice bath | Boiling | Fitted R25 | Fitted B | Datasheet |
+|---|---|---|---|---|---|
+| PID | 660.8 counts | 77.7 counts | 97 886 Ω | 3910 | 100 kΩ / 3950 |
+| AUX | 1002.5 counts | 293.1 counts | 10 631 Ω | 4096 | 10 kΩ / 3950 |
+
+With datasheet values the PID sensor read +0.6 °C in ice and 95.5 °C at boiling, and the AUX sensor −2.0 °C and 96.8 °C. A single ADC gain can't fix both, because the errors have opposite signs. That's why the calibration is per sensor.
+
+To recalibrate (new thermistor, new resistor, or a different boiling point), average the raw counts and refit:
+```
+python3 tools/calibrate_thermistors.py --average data_N.log          # mean counts from a log or serial capture
+python3 tools/calibrate_thermistors.py --elevation 1300              # boiling point for your elevation
+python3 tools/calibrate_thermistors.py --point 0:660.8:1002.5 --point 95.7:77.7:293.1
+```
+The tool reads the circuit constants from `src/sensor_manager.cpp` and prints the new R25/B lines. The fit only holds for the circuit constants and resistors it was made with. Change any of them and you need to recalibrate.
+
+**Accuracy: approximately ±1.5–2 °C between 0 °C and 95 °C.** Readings are exact at the two calibration points, but in between the ESP8266 ADC is not linear. A multimeter check at ~45 °C found the ADC reading ~1.7 % high at mid-scale and only ~0.6 % high near full scale, and the two-point fit can't follow that. In the same 45 °C water, the PID sensor read 44.7 °C and the AUX sensor 46.5 °C. Treat temperatures as approximate to about ±1.5–2 °C, and the difference between the two sensors as meaningful only above ~2 °C. A per-point check against a known-good hotplate (25–85 °C) is planned. A correction curve for the ADC (measured with a pot and a multimeter) would tighten this.
 
 If you add a filter capacitor on C1 or C2, the node no longer sees the full 320 kΩ load at the moment of the sample. Set `ADC_INPUT_RESISTANCE` to ~960000 (320k × 3 channels) and recalibrate.
 
@@ -125,8 +145,8 @@ Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... W
 
 ```csv
 timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-64659,0.016602,22.591,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,22.745,895,2.7969
-259599,0.016602,43.185,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,42.560,746,2.3312
+64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969
+259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312
 ```
 
 | # | Column | Unit | Description |
@@ -156,12 +176,12 @@ Each row is one pass over channels 0 → 1 → 2, so its three readings are take
 ```
 P = Rs × V / (VS − V)        resistance below the node (NTC in parallel with RL)
 R = P × RL / (RL − P)        NTC resistance
-1/T = 1/298.15 + ln(R/R25)/3950    (T in kelvin)
+1/T = 1/298.15 + ln(R/R25)/B      (T in kelvin)
 ```
-- PID Temp Sensor: V = `thermistor_v`, Rs = 98 kΩ, R25 = 100 kΩ
-- AUX Temp Sensor: V = `aux_v`, Rs = 2.0 kΩ, R25 = 10 kΩ
+- PID Temp Sensor: V = `thermistor_v`, Rs = 98 kΩ, R25 = 97 886 Ω, B = 3910
+- AUX Temp Sensor: V = `aux_v`, Rs = 2.0 kΩ, R25 = 10 631 Ω, B = 4096
 
-That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. The raw counts let you redo either conversion with a different calibration.
+That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. Logs written before the 2026-10-25 calibration used R25 = 100 kΩ / 10 kΩ and B = 3950. The raw counts let you redo either conversion with a different calibration.
 
 **Older log files** (before the circuit model was added) used V = adc/1024 × 3.3, R = 100k × V / (3.3 − V) with no A0 load, and `thermistor_v` / `aux_v` on that 3.3 V scale. Recalculate their temperatures from `thermistor_adc` and `aux_adc` with the formulas above.
 
@@ -269,7 +289,7 @@ Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_inter
 - AUX Temp Sensor: check the divider on C2 (~2.75 V at 25 °C, ~1.7 V at 65 °C). With nothing connected to C2 it reads N/A, and logging continues.
 
 ### PID and AUX Temp Sensors disagree
-- They measure different spots, so some difference is expected. A steady offset at room temperature points to a calibration or resistor-value issue: check `AUX_SERIES_RESISTOR` matches the resistor fitted, and compare both against a reference thermometer.
+- They measure different spots, so some difference is expected. In air the AUX Temp Sensor also self-heats by ~1 °C at room temperature (calibration was done in water, where self-heating is negligible), so it reads high there. To check the calibration, put both sensors in the same stirred water: they should agree within a few tenths of a °C. If they don't, check `AUX_SERIES_RESISTOR` matches the resistor fitted and recalibrate (see Calibration).
 
 For PlatformIO install/build problems, see [TROUBLESHOOTING.md](md_info_docs/TROUBLESHOOTING.md).
 

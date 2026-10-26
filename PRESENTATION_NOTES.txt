@@ -119,13 +119,15 @@ a) CD74HC4067 16-channel analog multiplexer
 
 b) PID Temp Sensor (channel C1) - controls the heater
    - 100 k NTC, Beta = 3950 K (same type as the Creality Ender 3)
-   - R25 = 100,000 ohm; series resistor = 100 k part, measured 98,000 ohm
+   - R25 = 100,000 ohm datasheet (calibrated 97,886 ohm, B 3910); series
+     resistor = 100 k part, measured 98,000 ohm
    - Wiring: 3.32V -- [98k] -- C1 -- [NTC] -- GND
    - Used by the PID and by the over-temp / sensor-fault safety checks
    - Resolution: ~4-6 ADC counts per C at 60-70 C
 
    AUX Temp Sensor (channel C2) - redundancy / sanity check
    - MF55 ultra-thin 10 k NTC, Beta = 3950 K (B25/50), +/-1 %, 0.7 mW/C
+     (calibrated R25 = 10,631 ohm, B = 4096)
    - Series resistor = 2.0 k ohm, measured 2.00 k (sized for 60-70 C, where the
      NTC is ~2.5-1.8 k): ~9 ADC counts per C (~0.11 C per count)
    - Wiring: 3.3V -- [2.0k] -- C2 -- [MF55 NTC] -- GND
@@ -138,10 +140,11 @@ b) PID Temp Sensor (channel C1) - controls the heater
    a 320 k load on whichever divider the mux selects. The rail is 3.32 V.
 
    Conversion for both (Beta equation, with the A0 load removed):
-       V = ADC/1024 * 3.2 * gain        (gain = ADC_CALIBRATION_GAIN, 1.0 for now)
+       V = ADC/1024 * 3.2 * gain        (gain = ADC_CALIBRATION_GAIN, left at 1.0)
        P = Rs * V / (3.32 - V)          NTC in parallel with the 320 k load
        R = P * 320k / (320k - P)        NTC alone (Rs = 98k PID, 2.0k AUX)
-       1/T = 1/298.15 + ln(R/R25)/3950  (R25 = 100k PID, 10k AUX)
+       1/T = 1/298.15 + ln(R/R25)/B     (calibrated: PID R25 = 97,886 ohm,
+                                         B = 3910; AUX R25 = 10,631 ohm, B = 4096)
        T(C) = T(K) - 273.15
    - Before this model: PID read ~5 C hot (its ~50 k divider is pulled ~14 %
      low by the load), AUX ~4 C cold (3.3 vs 3.2 V full scale). The 10 C gap
@@ -315,8 +318,9 @@ CSV columns:
 Columns 1-6 are the original format; 7-16 were added after them.
 thermistor_v and aux_v let you re-check every temperature:
   P = Rs * V / (3.32 - V);  R = P * 320k / (320k - P)
-  1/T = 1/298.15 + ln(R/R25)/3950  (T in K)
-  PID: Rs = 98k, R25 = 100k     AUX: Rs = 2.0k, R25 = 10k
+  1/T = 1/298.15 + ln(R/R25)/B  (T in K)
+  PID: Rs = 98k, R25 = 97,886, B = 3910   AUX: Rs = 2.0k, R25 = 10,631, B = 4096
+  (logs from before the 2026-10-25 calibration: R25 = 100k / 10k, B = 3950)
   -> matches the logged temperatures to within a few thousandths of a C.
   (Logs from before the circuit model used V = adc/1024 * 3.3 and
    R = 100k * V / (3.3 - V); recalculate them from the raw *_adc columns.)
@@ -324,8 +328,8 @@ thermistor_v and aux_v let you re-check every temperature:
 Example rows (two of your logged rows, as the corrected firmware logs them:
 room temperature, then stable at 45 C):
   timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-  64659,0.016602,22.591,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,22.745,895,2.7969
-  259599,0.016602,43.185,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,42.560,746,2.3312
+  64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969
+  259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312
 
 Data volume (theoretical maximum rate):
   ~91 bytes/row x ~167 rows/s = ~15 KB/s = ~55 MB/hour
@@ -390,10 +394,14 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    3.2 V full scale and a 320 k load. The thermistor conversions now model
    both (see section 4b). The voltage channel still uses ADC/1024 (0-1 V), so
    the logged "voltage" is the real voltage / 3.2 on those boards.
-   Still to do: ice bath calibration (ADC_CALIBRATION_GAIN), then re-test at
-   45 C. Note that the corrected PID reading is ~2 C lower than before at
-   45 C, so the same setpoint now holds the part ~2 C hotter than before
-   (it was actually sitting ~43 C).
+   Calibrated 2026-10-25 against an ice bath (0 C) and boiling water
+   (95.7 C at ~1300 m, SLC): R25/B fitted per sensor, see section 4b.
+   ACCURACY: approximately +/-1.5-2 C between those points. The ESP8266
+   ADC is non-linear (a multimeter check at 45 C showed it ~1.7 % high at
+   mid-scale vs ~0.6 % near full scale). In the same 45 C water: PID
+   44.7 C, AUX 46.5 C. Still to do: check at 25-85 C on a known-good
+   hotplate, then retune the PID gains. The calibrated PID reading is ~2.0 C lower than the original
+   firmware at 45 C, so the same setpoint now holds the part ~2.0 C hotter.
 6. If the SD card isn't ready at boot, no log file is created. Insert the
    card and press Start Logging (it retries), or reboot.
 7. Boot pins: D3/D4 must be HIGH and D8 LOW at power-up. Most SD modules
