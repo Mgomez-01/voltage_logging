@@ -80,16 +80,28 @@ C3-C15  | Free for more analog sensors
 
 ### PID Temp Sensor: 100k NTC Thermistor (C1)
 - 100 kΩ at 25 °C, β = 3950 K (Ender 3 type)
-- 100 kΩ series resistor to 3.3 V
+- 100 kΩ series resistor to 3.3 V (measures 98 kΩ on this board; `SERIES_RESISTOR` = 98000)
 - Used by the PID and by the over-temperature / sensor-fault safety checks
 - Firmware constants (`src/sensor_manager.cpp`): `THERMISTOR_NOMINAL`, `TEMPERATURE_NOMINAL`, `B_COEFFICIENT`, `SERIES_RESISTOR`
+- High divider impedance (~50 kΩ), so the board's 320 kΩ A0 load pulls the sampled voltage ~14 % low. The firmware models this; see "A0 load and full scale" below.
 
 ### AUX Temp Sensor: MF55 Ultra-Thin 10k NTC Thermistor (C2)
 - 10 kΩ at 25 °C, β = 3950 K (B25/50), ±1 %; rated -30 to +125 °C; dissipation constant 0.7 mW/°C
 - 2.0 kΩ series resistor to 3.3 V, chosen for resolution around 60-70 °C (the NTC is ~2.5-1.8 kΩ there): ~9 ADC counts per °C. Anything from 2.0 kΩ to 2.7 kΩ gives about the same resolution at 60-65 °C.
 - Self-heating: with 2.0 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can read up to ~1.9 °C high in still air, and less when pressed flat against a surface. 2.7 kΩ cuts this by about a quarter.
 - Second sensor at a different location, for redundancy and sanity checks. It is logged and displayed but **not** used by the PID or the safety checks.
-- Firmware constants (`src/sensor_manager.cpp`): `AUX_THERMISTOR_NOMINAL`, `AUX_TEMPERATURE_NOMINAL`, `AUX_B_COEFFICIENT`, `AUX_SERIES_RESISTOR`. `AUX_SERIES_RESISTOR` must match the resistor fitted. Use 3435 for `AUX_B_COEFFICIENT` if the part is a 103F3435.
+- Firmware constants (`src/sensor_manager.cpp`): `AUX_THERMISTOR_NOMINAL`, `AUX_TEMPERATURE_NOMINAL`, `AUX_B_COEFFICIENT`, `AUX_SERIES_RESISTOR`. `AUX_SERIES_RESISTOR` must match the resistor fitted (measured 2.00 kΩ). Use 3435 for `AUX_B_COEFFICIENT` if the part is a 103F3435.
+- Near 0 °C this divider sits close to the ADC ceiling (~997 of 1024 counts) with only ~3 counts per °C, so small ADC gain errors show up as several degrees there. That makes an ice bath a sensitive calibration point. It reads -999 below about -11 °C, where the ADC clips.
+
+### A0 load and full scale (NodeMCU / D1 mini)
+The board routes A0 through a 220k/100k divider to the ESP8266's 1.0 V ADC:
+- A0 full scale is **3.2 V** (`ADC_FULL_SCALE_VOLTAGE`)
+- A0 presents a **320 kΩ** load to whichever divider the mux selects (`ADC_INPUT_RESISTANCE`)
+- The thermistor rail measures **3.32 V** (`THERMISTOR_SUPPLY_VOLTAGE`)
+
+The conversion removes the load, so the NTC resistance it calculates is the real one. If you add a filter capacitor on C1 or C2, the node no longer sees the full load at the moment of the sample: set `ADC_INPUT_RESISTANCE` to ~960000 and recalibrate. `ADC_CALIBRATION_GAIN` (1.0 by default) scales the A0 voltage once it has been calibrated against a reference such as an ice bath.
+
+Open-sensor detection: a disconnected PID thermistor leaves the 98 kΩ / 320 kΩ divider, ~2.54 V (ADC ~813), not the rail. The firmware treats an NTC resistance above 20 × R25 (colder than about -30 °C) as open and returns -999, which trips the sensor-fault shutdown when the heater is on.
 
 ### microSD Module
 - SPI at 3.3 V, chip select on D8 (GPIO15), `SD.begin(SS)`
@@ -110,7 +122,7 @@ C3-C15  | Free for more analog sensors
 2. **Multiplexer**: VCC and EN to 3.3 V, GND to ground, S0-S3 to D1-D4, COM to A0.
 3. **Sensors**:
    - Voltage source to C0
-   - PID Temp Sensor divider to C1: 3.3 V → 100 kΩ → C1 → 100k NTC → GND
+   - PID Temp Sensor divider to C1: 3.3 V → 100 kΩ (measured 98 kΩ) → C1 → 100k NTC → GND
    - AUX Temp Sensor divider to C2: 3.3 V → 2.0 kΩ → C2 → MF55 10k NTC → GND
 4. **SD module**: VCC 3.3 V, GND, SCK→D5, MISO→D6, MOSI→D7, CS→D8. Insert a formatted card.
 5. **Heater**: D0 → MOSFET gate, 10 kΩ gate→GND, source→GND, drain→heater(−), heater(+)→12 V, supply GND→common GND.
@@ -118,9 +130,9 @@ C3-C15  | Free for more analog sensors
 ## Verification
 
 With a multimeter:
-- 3.3 V between mux VCC/EN and GND, and at the SD module VCC
-- ~1.65 V at C1 at room temperature (PID Temp Sensor)
-- ~2.75 V at C2 at room temperature, ~1.7 V at 65 °C (AUX Temp Sensor with 2.0 kΩ)
+- 3.3 V between mux VCC/EN and GND, and at the SD module VCC (this board measures 3.32 V; `THERMISTOR_SUPPLY_VOLTAGE` should match)
+- PID Temp Sensor, C1 at 25 °C: ~1.68 V with nothing sampling it, ~1.45 V while the mux connects it to A0. With the ESP8266 running, a meter shows something in between.
+- AUX Temp Sensor, C2 at 25 °C: ~2.75 V (the A0 load barely affects it); ~1.7 V at 65 °C
 - Your source voltage at C0
 - 0 V at the MOSFET gate with the heater off
 
@@ -137,15 +149,15 @@ PWM control via MOSFET (AOD4144) for smooth heater power regulation
 A0 pin number: 17
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V
-Channel 1 (PID Temp Sensor): 512 -> 25.00°C
-Channel 2 (AUX Temp Sensor): 853 -> 25.05°C
+Channel 1 (PID Temp Sensor): 465 -> 24.97°C
+Channel 2 (AUX Temp Sensor): 881 -> 24.96°C
 ...
 Initializing data file... SD card initialized.
 Created new data file: data_3.log
 OK
 ```
 
-(ADC 512 is the 100k/100k divider midpoint, 1.65 V, which is exactly 25 °C. ADC 853 is the nearest count to 25 °C for the 2.0 kΩ / 10k AUX divider. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
+(ADC 465 and 881 are the nearest counts to 25 °C for this board: 98 kΩ / 100k NTC and 2.0 kΩ / 10k NTC dividers on a 3.32 V rail, with the 320 kΩ A0 load and 3.2 V full scale. Expect a few counts of difference until `ADC_CALIBRATION_GAIN` is calibrated. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
 
 ## Troubleshooting
 
@@ -157,7 +169,7 @@ OK
 - With no card at boot, no log file is created. Insert the card and press Start Logging (it retries the SD setup), or reboot.
 
 ### PID Temp Sensor shows N/A / -999
-- Check the divider on C1 and the 100 kΩ resistor. The thermistor should measure ~100 kΩ at room temperature.
+- Check the divider on C1 and the series resistor. The thermistor should measure ~100 kΩ near 25 °C (e.g. ~104.5 kΩ at 24 °C). A disconnected PID thermistor reads -999 and trips the sensor-fault shutdown if the heater is on.
 
 ### AUX Temp Sensor shows N/A / -999
 - Check the divider on C2 and the 2.0 kΩ resistor. The MF55 should measure ~10 kΩ at room temperature.

@@ -119,26 +119,38 @@ a) CD74HC4067 16-channel analog multiplexer
 
 b) PID Temp Sensor (channel C1) - controls the heater
    - 100 k NTC, Beta = 3950 K (same type as the Creality Ender 3)
-   - R25 = 100,000 ohm; series resistor = 100,000 ohm to 3.3 V
-   - Wiring: 3.3V -- [100k] -- C1 -- [NTC] -- GND
+   - R25 = 100,000 ohm; series resistor = 100 k part, measured 98,000 ohm
+   - Wiring: 3.32V -- [98k] -- C1 -- [NTC] -- GND
    - Used by the PID and by the over-temp / sensor-fault safety checks
    - Resolution: ~4-6 ADC counts per C at 60-70 C
 
    AUX Temp Sensor (channel C2) - redundancy / sanity check
    - MF55 ultra-thin 10 k NTC, Beta = 3950 K (B25/50), +/-1 %, 0.7 mW/C
-   - Series resistor = 2.0 k ohm to 3.3 V (sized for 60-70 C, where the
+   - Series resistor = 2.0 k ohm, measured 2.00 k (sized for 60-70 C, where the
      NTC is ~2.5-1.8 k): ~9 ADC counts per C (~0.11 C per count)
    - Wiring: 3.3V -- [2.0k] -- C2 -- [MF55 NTC] -- GND
    - Logged and displayed only: NOT used by the PID or the safety checks
    - Self-heating with 2.0k: ~1.4 mW at 65 C, up to ~1.9 C high in still
      air (less when pressed against a surface; 2.7k reduces it ~25 %)
 
-   Conversion for both (Beta equation):
-       V = ADC/1024 * 3.3
-       R = Rs * V / (3.3 - V)           (Rs = 100k PID, 2.0k AUX)
+   Measurement circuit: the NodeMCU / D1 mini routes A0 through a 220k/100k
+   divider to the ESP8266's 1.0 V ADC. So A0 full scale is 3.2 V, and A0 puts
+   a 320 k load on whichever divider the mux selects. The rail is 3.32 V.
+
+   Conversion for both (Beta equation, with the A0 load removed):
+       V = ADC/1024 * 3.2 * gain        (gain = ADC_CALIBRATION_GAIN, 1.0 for now)
+       P = Rs * V / (3.32 - V)          NTC in parallel with the 320 k load
+       R = P * 320k / (320k - P)        NTC alone (Rs = 98k PID, 2.0k AUX)
        1/T = 1/298.15 + ln(R/R25)/3950  (R25 = 100k PID, 10k AUX)
        T(C) = T(K) - 273.15
-   - Error value -999 if ADC <= 1 (short) or V >= 3.29 V (open / not connected)
+   - Before this model: PID read ~5 C hot (its ~50 k divider is pulled ~14 %
+     low by the load), AUX ~4 C cold (3.3 vs 3.2 V full scale). The 10 C gap
+     at room temperature drops to ~0.01 C with the model.
+   - Error value -999 if ADC <= 1 (short), ADC >= 1023 (saturated: AUX
+     unplugged or < ~-11 C), or R > 20 x R25 (open: an unplugged PID NTC
+     reads ~2.54 V because of the load, so it can't be detected by voltage)
+   - Calibration (next step): ice bath at 0 C, fit ADC_CALIBRATION_GAIN.
+     AUX has only ~3 counts/C near 0 C, so it is the most sensitive to gain.
 
 c) Voltage channel (C0)
    - voltage = ADC / 1024 (0-1 V scale, 10-bit, ~1 mV per step)
@@ -284,8 +296,8 @@ CSV columns:
 | 7 | voltage_adc  | counts| integer    | Raw ADC reading, channel 0 (0-1023)   |
 | 8 | thermistor_  | counts| integer    | Raw ADC reading, channel 1 (0-1023)   |
 |   | adc          |       |            |                                       |
-| 9 | thermistor_v | V     | 4 decimals | Divider voltage = adc/1024 * 3.3; the |
-|   |              |       |            | exact value the temperature is        |
+| 9 | thermistor_v | V     | 4 decimals | A0 voltage = adc/1024 * 3.2 * gain;   |
+|   |              |       |            | the exact value the temperature is    |
 |   |              |       |            | calculated from                       |
 |10 | pid_enabled  | 0/1   | integer    | 1 = PID controlling the heater,       |
 |   |              |       |            | 0 = manual ON/OFF                     |
@@ -295,21 +307,25 @@ CSV columns:
 |14 | aux_temp     | deg C | 3 decimals | AUX Temp Sensor, channel 2            |
 |   |              |       |            | (-999 = open/short / not connected)   |
 |15 | aux_adc      | counts| integer    | Raw ADC reading, channel 2 (0-1023)   |
-|16 | aux_v        | V     | 4 decimals | AUX divider voltage = adc/1024 * 3.3; |
+|16 | aux_v        | V     | 4 decimals | AUX A0 voltage = adc/1024 * 3.2 * gain|
 |   |              |       |            | the exact value aux_temp is           |
 |   |              |       |            | calculated from                       |
 +---+--------------+-------+------------+---------------------------------------+
 
 Columns 1-6 are the original format; 7-16 were added after them.
 thermistor_v and aux_v let you re-check every temperature:
-  R = Rs * V / (3.3 - V);  1/T = 1/298.15 + ln(R/R25)/3950  (T in K)
-  PID: Rs = 100k, R25 = 100k     AUX: Rs = 2.0k, R25 = 10k
+  P = Rs * V / (3.32 - V);  R = P * 320k / (320k - P)
+  1/T = 1/298.15 + ln(R/R25)/3950  (T in K)
+  PID: Rs = 98k, R25 = 100k     AUX: Rs = 2.0k, R25 = 10k
   -> matches the logged temperatures to within a few thousandths of a C.
+  (Logs from before the circuit model used V = adc/1024 * 3.3 and
+   R = 100k * V / (3.3 - V); recalculate them from the raw *_adc columns.)
 
-Example rows:
+Example rows (two of your logged rows, as the corrected firmware logs them:
+room temperature, then stable at 45 C):
   timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-  120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150,25.053,853,2.7489
-  120010,0.823242,25.088,1,45.00,18.40,843,511,1.6468,1,2.200,0.250,0.150,25.210,852,2.7457
+  64659,0.016602,22.591,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,22.745,895,2.7969
+  259599,0.016602,43.185,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,42.560,746,2.3312
 
 Data volume (theoretical maximum rate):
   ~91 bytes/row x ~167 rows/s = ~15 KB/s = ~55 MB/hour
@@ -350,7 +366,7 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
 
 9. THINGS TO KNOW BEFORE PRESENTING
 -------------------------------------------------------------------------------
-1. BOOT FILENAME FIX (applied to your working copy, not committed yet):
+1. BOOT FILENAME FIX (committed):
    - "Download Data" with no file name now downloads the current log file
      (flushing the buffer first) instead of failing with "400 Missing file
      parameter".
@@ -370,11 +386,14 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    make the safety check read the sensor directly.
 4. 30-minute limit: under PID the duty rarely drops to 0 %, so a long hold
    counts as "continuous heating" and triggers a shutdown at 30 min.
-5. ADC scaling mismatch: on a NodeMCU/D1 mini, A0 has an onboard divider
-   (accepts 0-3.3 V). The thermistor math assumes 0-3.3 V, but the voltage
-   channel uses ADC/1024 (0-1 V), so the logged "voltage" is the real voltage
-   / 3.3 on those boards. The onboard divider also loads the thermistor
-   divider a little. Calibrate against a reference thermometer.
+5. ADC scaling: on a NodeMCU/D1 mini, A0's onboard 220k/100k divider gives a
+   3.2 V full scale and a 320 k load. The thermistor conversions now model
+   both (see section 4b). The voltage channel still uses ADC/1024 (0-1 V), so
+   the logged "voltage" is the real voltage / 3.2 on those boards.
+   Still to do: ice bath calibration (ADC_CALIBRATION_GAIN), then re-test at
+   45 C. Note that the corrected PID reading is ~2 C lower than before at
+   45 C, so the same setpoint now holds the part ~2 C hotter than before
+   (it was actually sitting ~43 C).
 6. If the SD card isn't ready at boot, no log file is created. Insert the
    card and press Start Logging (it retries), or reboot.
 7. Boot pins: D3/D4 must be HIGH and D8 LOW at power-up. Most SD modules

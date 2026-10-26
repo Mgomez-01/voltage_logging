@@ -17,11 +17,17 @@ extern const int AUX_THERMISTOR_CHANNEL; // Channel 2: AUX Temp Sensor (not in t
 // ADC pin
 extern const int ADC_PIN;
 
+// Measurement circuit (see sensor_manager.cpp)
+extern const float THERMISTOR_SUPPLY_VOLTAGE; // Rail feeding both dividers (measured 3.32 V)
+extern const float ADC_FULL_SCALE_VOLTAGE;    // 3.2 V: A0 full scale with the board's 220k/100k divider
+extern const float ADC_INPUT_RESISTANCE;      // 320k board divider loading the selected channel
+extern const float ADC_CALIBRATION_GAIN;      // Calibration multiplier for the A0 voltage (1.0 = uncalibrated)
+
 // PID Temp Sensor configuration (channel 1)
 extern const float THERMISTOR_NOMINAL;   // 100k ohm at 25°C
 extern const float TEMPERATURE_NOMINAL;  // 25°C
 extern const float B_COEFFICIENT;        // Beta coefficient for typical 100k thermistor
-extern const float SERIES_RESISTOR;      // 100k series resistor
+extern const float SERIES_RESISTOR;      // Series resistor (measured 98k)
 
 // AUX Temp Sensor configuration (channel 2)
 extern const float AUX_THERMISTOR_NOMINAL;   // 10k ohm at 25°C
@@ -35,7 +41,7 @@ extern int currentSensorChannel;
 // Function declarations
 void setupMultiplexer();
 void selectMuxChannel(int channel);
-float thermistorAdcToVoltage(int adcValue);  // Divider voltage used by the conversion
+float thermistorAdcToVoltage(int adcValue);  // A0 voltage (0-3.2 V, calibrated) used by the conversion
 float convertThermistorToTemperature(int adcValue);     // PID Temp Sensor
 float convertAuxThermistorToTemperature(int adcValue);  // AUX Temp Sensor
 void testSensorChannels();

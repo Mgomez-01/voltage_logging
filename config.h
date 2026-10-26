@@ -42,17 +42,32 @@
 //   THERMISTOR_CHANNEL     = 1   PID Temp Sensor (PID + safety checks)
 //   AUX_THERMISTOR_CHANNEL = 2   AUX Temp Sensor (logged/displayed only)
 //
+// Measurement circuit (both thermistor channels)
+//   THERMISTOR_SUPPLY_VOLTAGE = 3.32     V, measured rail feeding both dividers
+//   ADC_FULL_SCALE_VOLTAGE    = 3.2      V at A0 that reads 1024 (board's
+//                                        220k/100k divider to the 1.0 V ADC)
+//   ADC_INPUT_RESISTANCE      = 320000.0 ohm, that divider loading the selected
+//                                        channel (use ~960000 if a filter
+//                                        capacitor is added on C1/C2)
+//   ADC_CALIBRATION_GAIN      = 1.0      multiplier on the A0 voltage; set from
+//                                        the ice bath / reference calibration
+//   Conversion: V = adc/1024 * 3.2 * gain
+//               P = Rs * V / (VS - V);  R = P * RL / (RL - P)
+//               1/T = 1/(T25 + 273.15) + ln(R/R25)/B
+//   -999 when adc <= 1 (short), adc >= 1023 (saturated), or R > 20 x R25
+//   (open: a disconnected PID NTC reads ~2.54 V because of the 320k load)
+//
 // PID Temp Sensor (100k NTC, Beta equation)
-//   THERMISTOR_NOMINAL  = 100000.0  ohm at 25 C
+//   THERMISTOR_NOMINAL  = 100000.0  ohm at 25 C (R25; keep the datasheet value)
 //   TEMPERATURE_NOMINAL = 25.0      C
 //   B_COEFFICIENT       = 3950.0
-//   SERIES_RESISTOR     = 100000.0  ohm (3.3V -- R -- C1 -- NTC -- GND)
+//   SERIES_RESISTOR     = 98000.0   ohm, measured (VS -- R -- C1 -- NTC -- GND)
 //
 // AUX Temp Sensor (MF55 ultra-thin 10k NTC, Beta equation)
 //   AUX_THERMISTOR_NOMINAL  = 10000.0  ohm at 25 C
 //   AUX_TEMPERATURE_NOMINAL = 25.0     C
 //   AUX_B_COEFFICIENT       = 3950.0   (B25/50; use 3435 for a 103F3435 part)
-//   AUX_SERIES_RESISTOR     = 2000.0   ohm (3.3V -- R -- C2 -- NTC -- GND)
+//   AUX_SERIES_RESISTOR     = 2000.0   ohm, measured (VS -- R -- C2 -- NTC -- GND)
 //                             Must match the resistor fitted. ~9 counts/C at
 //                             60-70 C; 2.0k-2.7k give about the same.
 
@@ -73,8 +88,8 @@
 //     temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
 //     aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
 //     *_adc        = raw ADC counts (0-1023)
-//     *_v          = adc / 1024 * 3.3, the voltage each temperature is
-//                    calculated from (thermistorAdcToVoltage())
+//     *_v          = adc / 1024 * 3.2 * ADC_CALIBRATION_GAIN, the A0 voltage
+//                    each temperature is calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
 //     kp, ki, kd   = gains in effect; /pid/params flushes the buffer before
 //                    changing them

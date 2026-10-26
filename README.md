@@ -19,7 +19,7 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 - **ESP8266 board**: NodeMCU v2 or Wemos D1 mini (ESP-12E/F)
 - **CD74HC4067** 16-channel analog multiplexer
 - **microSD card module** (SPI, 3.3 V) or Wemos D1 mini micro-SD shield, with a FAT16/FAT32-formatted card (Class 10 or faster recommended)
-- **100 kΩ resistor** for the PID Temp Sensor divider
+- **100 kΩ resistor** for the PID Temp Sensor divider (measures 98 kΩ on this board; the firmware uses the measured value)
 - **2.0 kΩ resistor** for the AUX Temp Sensor divider (see below)
 
 ### Sensors
@@ -28,6 +28,19 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 - **AUX Temp Sensor**: MF55 ultra-thin 10 kΩ NTC thermistor, β = 3950 K (B25/50)
 
 The AUX series resistor is sized for resolution around 60-70 °C, where the 10k NTC measures about 2.5-1.8 kΩ. That gives ~9 ADC counts per °C (~0.11 °C per count); anything from 2.0 kΩ to 2.7 kΩ gives about the same there. With ~2 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can warm it by up to ~1.9 °C in still air (0.7 mW/°C), and less when it is pressed against a surface. A 2.7 kΩ resistor cuts that by about a quarter. `AUX_SERIES_RESISTOR` in `src/sensor_manager.cpp` must match the resistor fitted.
+
+### How the temperatures are calculated
+Both dividers run from the 3.3 V rail (measured 3.32 V). On NodeMCU / D1 mini boards, A0 goes through an onboard 220k/100k divider to the ESP8266's 1.0 V ADC. That has two effects, and the firmware models both:
+- **A0 full scale is 3.2 V**, not 3.3 V (ADC count 1024 = 3.2 V)
+- **A0 loads the selected divider with 320 kΩ.** This matters for the PID Temp Sensor (~50 kΩ divider impedance): its node is pulled ~14 % low. It barely affects the AUX Temp Sensor (~1.7 kΩ).
+
+Before this was modelled, the PID Temp Sensor read ~5 °C hot and the AUX Temp Sensor ~4 °C cold at room temperature. With it, they agree to within a few hundredths of a °C at room temperature.
+
+The circuit constants are in `src/sensor_manager.cpp`: `THERMISTOR_SUPPLY_VOLTAGE` (3.32), `ADC_FULL_SCALE_VOLTAGE` (3.2), `ADC_INPUT_RESISTANCE` (320000), the measured series resistors, and `ADC_CALIBRATION_GAIN` (1.0 until calibrated against a reference such as an ice bath). Keep `THERMISTOR_NOMINAL` / `AUX_THERMISTOR_NOMINAL` at the datasheet R25 values (100 kΩ / 10 kΩ). A thermistor measuring 104.5 kΩ or 10.41 kΩ is simply at ~24 °C, not off-spec.
+
+If you add a filter capacitor on C1 or C2, the node no longer sees the full 320 kΩ load at the moment of the sample. Set `ADC_INPUT_RESISTANCE` to ~960000 (320k × 3 channels) and recalibrate.
+
+An NTC resistance above 20 × R25 (colder than about -30 °C) is treated as an open sensor, and an ADC reading at full scale (1023-1024) as unknown; both log -999. This matters for the PID Temp Sensor: because of the 320 kΩ load, a disconnected PID thermistor reads ~2.54 V (ADC ~813) rather than near the rail. Without this check it would read as a cold temperature and the PID would heat at full power. Returning -999 trips the sensor-fault shutdown instead.
 
 ### Heater
 - **AOD4144** N-channel logic-level MOSFET (low-side switch)
@@ -54,8 +67,8 @@ GND            Mux, SD, MOSFET source, 12 V supply ground
 
 Mux channels:
   C0 -> voltage source
-  C1 -> PID Temp Sensor: 3.3V --[100k]-- C1 --[100k NTC]-- GND
-  C2 -> AUX Temp Sensor: 3.3V --[2.0k]-- C2 --[10k NTC]--  GND
+  C1 -> PID Temp Sensor: 3.3V --[100k, meas. 98k]-- C1 --[100k NTC]-- GND
+  C2 -> AUX Temp Sensor: 3.3V --[2.0k]------------- C2 --[10k NTC]--  GND
 ```
 
 See [WIRING_GUIDE.md](WIRING_GUIDE.md) for the full diagram, heater circuit and checks.
@@ -112,8 +125,8 @@ Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... W
 
 ```csv
 timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-120004,0.822266,25.000,1,45.00,18.40,842,512,1.6500,1,2.200,0.250,0.150,25.053,853,2.7489
-120010,0.823242,25.088,1,45.00,18.40,843,511,1.6468,1,2.200,0.250,0.150,25.210,852,2.7457
+64659,0.016602,22.591,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,22.745,895,2.7969
+259599,0.016602,43.185,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,42.560,746,2.3312
 ```
 
 | # | Column | Unit | Description |
@@ -126,24 +139,31 @@ timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,th
 | 6 | pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
 | 7 | voltage_adc | counts | Raw ADC reading for channel 0 (0-1023) |
 | 8 | thermistor_adc | counts | Raw ADC reading for channel 1, PID Temp Sensor (0-1023) |
-| 9 | thermistor_v | V | PID Temp Sensor divider voltage, `thermistor_adc`/1024 × 3.3 (4 decimals). This is the exact value `temperature` is calculated from. |
+| 9 | thermistor_v | V | PID Temp Sensor voltage at A0, `thermistor_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `temperature` is calculated from. |
 | 10 | pid_enabled | 0/1 | 1 if the PID was controlling the heater, 0 for manual ON/OFF. Tells PID-at-100% apart from manual ON. |
 | 11 | kp | - | PID proportional gain in effect (3 decimals) |
 | 12 | ki | - | PID integral gain in effect |
 | 13 | kd | - | PID derivative gain in effect |
 | 14 | aux_temp | °C | **AUX Temp Sensor**, channel 2 (3 decimals, -999 = open/short or not connected) |
 | 15 | aux_adc | counts | Raw ADC reading for channel 2, AUX Temp Sensor (0-1023) |
-| 16 | aux_v | V | AUX Temp Sensor divider voltage, `aux_adc`/1024 × 3.3 (4 decimals). This is the exact value `aux_temp` is calculated from. |
+| 16 | aux_v | V | AUX Temp Sensor voltage at A0, `aux_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `aux_temp` is calculated from. |
 
 Columns 1-6 are the original format. Columns 7-16 were added after them, so scripts that read by column name keep working.
 
 Each row is one pass over channels 0 → 1 → 2, so its three readings are taken within ~4 ms of each other.
 
-**Checking the temperatures:** both use R = Rs × V / (3.3 − V) and 1/T = 1/298.15 + ln(R/R25)/3950 (T in kelvin):
-- PID Temp Sensor: V = `thermistor_v`, Rs = 100 kΩ, R25 = 100 kΩ
+**Checking the temperatures:** with VS = 3.32 V and RL = 320 kΩ (the A0 load), both use:
+```
+P = Rs × V / (VS − V)        resistance below the node (NTC in parallel with RL)
+R = P × RL / (RL − P)        NTC resistance
+1/T = 1/298.15 + ln(R/R25)/3950    (T in kelvin)
+```
+- PID Temp Sensor: V = `thermistor_v`, Rs = 98 kΩ, R25 = 100 kΩ
 - AUX Temp Sensor: V = `aux_v`, Rs = 2.0 kΩ, R25 = 10 kΩ
 
-That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. The raw counts let you redo either conversion with a different calibration or ADC scaling.
+That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. The raw counts let you redo either conversion with a different calibration.
+
+**Older log files** (before the circuit model was added) used V = adc/1024 × 3.3, R = 100k × V / (3.3 − V) with no A0 load, and `thermistor_v` / `aux_v` on that 3.3 V scale. Recalculate their temperatures from `thermistor_adc` and `aux_adc` with the formulas above.
 
 **Gains:** the kp/ki/kd columns hold the gains when the row was sampled. Changing them with `/pid/params` saves the buffered rows first, so rows never show gains they weren't sampled under. The serial monitor warns if that save fails.
 
@@ -245,8 +265,8 @@ Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_inter
 - Check for an active emergency shutdown in the serial monitor, and use System Reset
 
 ### Temperature reads N/A or -999
-- PID Temp Sensor: check the divider on C1 (~1.65 V at room temperature)
-- AUX Temp Sensor: check the divider on C2 (~2.75 V at room temperature with the 2.0 kΩ resistor, ~1.7 V at 65 °C). With nothing connected to C2 it reads N/A, and logging continues.
+- PID Temp Sensor: check the divider on C1. At 25 °C it is ~1.68 V unloaded, ~1.45 V while the ESP8266 samples it (a meter shows something in between). A disconnected PID thermistor reads -999 and trips the sensor-fault shutdown if the heater is on.
+- AUX Temp Sensor: check the divider on C2 (~2.75 V at 25 °C, ~1.7 V at 65 °C). With nothing connected to C2 it reads N/A, and logging continues.
 
 ### PID and AUX Temp Sensors disagree
 - They measure different spots, so some difference is expected. A steady offset at room temperature points to a calibration or resistor-value issue: check `AUX_SERIES_RESISTOR` matches the resistor fitted, and compare both against a reference thermometer.
@@ -255,7 +275,7 @@ For PlatformIO install/build problems, see [TROUBLESHOOTING.md](md_info_docs/TRO
 
 ## Notes
 
-- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.3 V, so the logged value is the actual voltage ÷ 3.3. The thermistor conversion already assumes 0-3.3 V. Because `voltage_adc` is logged, the actual voltage can be recovered afterwards (`voltage_adc` / 1024 × 3.3 on those boards).
+- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.2 V, so the logged value is the actual voltage ÷ 3.2. The thermistor conversions model this (see "How the temperatures are calculated"). Because `voltage_adc` is logged, the actual voltage can be recovered afterwards (`voltage_adc` / 1024 × 3.2 on those boards).
 - Timestamps restart at 0 on each boot. Each boot also starts a new log file.
 - Further guides and change notes from earlier versions (relay control, internal-flash logging) are in `md_info_docs/`. Each change note starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current firmware.
 

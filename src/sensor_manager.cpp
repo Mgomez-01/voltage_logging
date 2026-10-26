@@ -15,15 +15,48 @@ const int AUX_THERMISTOR_CHANNEL = 2; // Channel 2: AUX Temp Sensor (logged only
 // ADC pin
 const int ADC_PIN = A0;
 
+// ---------------------------------------------------------------------------
+// Measurement circuit (shared by both thermistor channels)
+//
+//   VS ---[Rs]---+--- mux --- A0 ---[220k]---+--- ESP8266 ADC (0-1.0 V)
+//                |                           |
+//              [NTC]                       [100k]
+//                |                           |
+//               GND                         GND
+//
+// The NodeMCU / Wemos D1 mini board has a 220k/100k divider in front of the
+// ESP8266's 1.0 V ADC. That makes A0's full scale 3.2 V (not 3.3 V), and it
+// puts a 320k load on whichever divider the mux has selected. Both effects are
+// modelled below; ignoring them made the PID sensor read ~5 °C hot and the AUX
+// sensor ~4 °C cold at room temperature.
+// ---------------------------------------------------------------------------
+const float THERMISTOR_SUPPLY_VOLTAGE = 3.32;  // VS: measured rail feeding both dividers (V)
+const float ADC_FULL_SCALE_VOLTAGE = 3.2;      // A0 voltage that reads 1024 (220k/100k board divider)
+const float ADC_INPUT_RESISTANCE = 320000.0;   // Board divider seen from A0 (220k + 100k), loads the
+                                               // selected divider. Without a capacitor on C1/C2 the
+                                               // load applies at the moment of the sample. If you add
+                                               // a filter capacitor on C1/C2, the node averages instead:
+                                               // use ~960000 (320k x 3 channels) and recalibrate.
+const float ADC_CALIBRATION_GAIN = 1.0;        // Step 2 (calibration): multiply the A0 voltage by this.
+                                               // The ADC on this board reads ~2-3 % high at room
+                                               // temperature; fit this from the ice bath / reference test.
+
+// Readings beyond these limits mean an open or shorted sensor, and return -999
+// so the safety system's sensor-fault check sees them. Because of the 320k load,
+// a disconnected PID thermistor reads ~2.54 V (ADC ~813), never near the rail,
+// so "open" is detected as an implausibly high NTC resistance instead.
+const int ADC_SATURATED = 1023;                // ADC at/near full scale: can't tell the value (AUX open, or < ~-11 °C)
+const float NTC_OPEN_RATIO = 20.0;             // R > 20 x R25 (colder than ~-30 °C) = open sensor
+
 // PID Temp Sensor (channel 1): 100k NTC, Beta 3950 (Ender 3 type)
-// Divider: 3.3V -- SERIES_RESISTOR -- C1 -- NTC -- GND
-const float THERMISTOR_NOMINAL = 100000.0;   // 100k ohm at 25°C
+// Divider: VS -- SERIES_RESISTOR -- C1 -- NTC -- GND
+const float THERMISTOR_NOMINAL = 100000.0;   // 100k ohm at 25°C (R25; not the room-temperature reading)
 const float TEMPERATURE_NOMINAL = 25.0;      // 25°C
 const float B_COEFFICIENT = 3950.0;          // Beta coefficient for typical 100k thermistor
-const float SERIES_RESISTOR = 100000.0;      // 100k series resistor
+const float SERIES_RESISTOR = 98000.0;       // Series resistor, measured on the board (100k part, reads 98k)
 
 // AUX Temp Sensor (channel 2): MF55 ultra-thin 10k NTC, Beta 3950
-// Divider: 3.3V -- AUX_SERIES_RESISTOR -- C2 -- NTC -- GND
+// Divider: VS -- AUX_SERIES_RESISTOR -- C2 -- NTC -- GND
 // AUX_SERIES_RESISTOR must match the resistor actually fitted. ~2 kOhm puts the
 // best resolution (~9 ADC counts/°C) around 60-70°C, where the NTC itself is
 // ~2.5k-1.8k. 2.0k-2.7k all give about the same resolution there; 2.7k heats
@@ -31,7 +64,7 @@ const float SERIES_RESISTOR = 100000.0;      // 100k series resistor
 const float AUX_THERMISTOR_NOMINAL = 10000.0;  // 10k ohm at 25°C
 const float AUX_TEMPERATURE_NOMINAL = 25.0;    // 25°C
 const float AUX_B_COEFFICIENT = 3950.0;        // B25/50 = 3950 K (MF55 103F3950)
-const float AUX_SERIES_RESISTOR = 2000.0;      // 2.0k series resistor
+const float AUX_SERIES_RESISTOR = 2000.0;      // 2.0k series resistor (measured 2.00k on the board)
 
 // Current sensor channel being read
 int currentSensorChannel = VOLTAGE_CHANNEL; // Start with voltage channel
@@ -58,22 +91,30 @@ void selectMuxChannel(int channel) {
   delayMicroseconds(10);
 }
 
-// Thermistor divider voltage (0-3.3 V ADC range). Used by both temperature
-// conversions below and logged as thermistor_v / aux_v, so each logged voltage
-// is exactly the one its temperature was calculated from.
+// Voltage at A0 / the selected divider node (0-3.2 V), with the calibration gain
+// applied. Used by both temperature conversions below and logged as
+// thermistor_v / aux_v, so each logged voltage is exactly the one its
+// temperature was calculated from.
 float thermistorAdcToVoltage(int adcValue) {
-  return (adcValue / 1024.0) * 3.3; // Assuming 3.3V reference
+  return (adcValue / 1024.0) * ADC_FULL_SCALE_VOLTAGE * ADC_CALIBRATION_GAIN;
 }
 
-// Beta-equation conversion for a divider 3.3V -- seriesResistor -- ADC -- NTC -- GND.
-// Returns -999 for an open or shorted sensor.
+// Beta-equation conversion for a divider VS -- seriesResistor -- node -- NTC -- GND,
+// with the board's ADC_INPUT_RESISTANCE in parallel with the NTC while sampling.
+// Returns -999 for an open, shorted or saturated sensor.
 static float ntcAdcToCelsius(int adcValue, float seriesResistor, float nominalResistance,
                              float nominalTempC, float beta) {
-  if (adcValue <= 1) return -999; // Error value for no reading (check 0 and 1)
+  if (adcValue <= 1) return -999;                  // Shorted NTC (or no reading)
+  if (adcValue >= ADC_SATURATED) return -999;      // At full scale: value unknown
   float voltage = thermistorAdcToVoltage(adcValue);
-  if (voltage >= 3.29) return -999; // Open circuit
-  float resistance = seriesResistor * voltage / (3.3 - voltage);
-  if (resistance <= 0) return -999; // Avoid log(0) or log(-)
+  if (voltage >= THERMISTOR_SUPPLY_VOLTAGE) return -999;
+  // Resistance below the node (NTC in parallel with the ADC input load)
+  float parallel = seriesResistor * voltage / (THERMISTOR_SUPPLY_VOLTAGE - voltage);
+  if (parallel >= ADC_INPUT_RESISTANCE) return -999;  // Only the ADC load is there: open NTC
+  // Remove the ADC load: 1/R = 1/parallel - 1/ADC_INPUT_RESISTANCE
+  float resistance = parallel * ADC_INPUT_RESISTANCE / (ADC_INPUT_RESISTANCE - parallel);
+  if (resistance <= 0) return -999;                    // Avoid log(0) or log(-)
+  if (resistance > nominalResistance * NTC_OPEN_RATIO) return -999;  // Open NTC
   float steinhart;
   steinhart = resistance / nominalResistance;      // (R/Ro)
   steinhart = log(steinhart);                      // ln(R/Ro)
