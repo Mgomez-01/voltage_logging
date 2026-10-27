@@ -70,6 +70,12 @@
             <button onclick="stopLogging()" class="btn" id="stopBtn" style="background-color:#dc3545;margin:5px;" {{STOP_LOGGING_DISABLED_ATTR}}>Stop Logging</button>
             <button onclick="testConnection()" class="btn" style="background-color:#17a2b8;margin:5px;">Test Connection</button>
             <div style="font-size:14px;color:#6c757d;margin-top:10px;">{{LOGGING_DESCRIPTION_INITIAL}}</div>
+            <div style="margin-top:12px;font-size:15px;">
+                <label><input type="checkbox" id="avgCheckbox" onchange="setAveraging()" {{AVG_CHECKED_ATTR}}> Average</label>
+                <input type="number" id="avgSamples" min="{{AVG_SAMPLES_MIN}}" max="{{AVG_SAMPLES_MAX}}" value="{{AVG_SAMPLES_INITIAL}}" onchange="setAveraging()" style="width:60px;">
+                sample cycles per logged row
+            </div>
+            <div id="avgDescription" style="font-size:13px;color:#6c757d;margin-top:4px;"></div>
         </div>
 
         <div id="status" class="status disconnected">Connecting to WebSocket...</div>
@@ -551,6 +557,43 @@ function resetSystem() {
             });
         }
 
+        // Averaging (oversampling): off = every sample cycle logged raw;
+        // on = N cycles averaged into one row (the "samples" column says which).
+        function describeAveraging() {
+            var on = document.getElementById('avgCheckbox').checked;
+            var n = parseInt(document.getElementById('avgSamples').value, 10);
+            document.getElementById('avgDescription').textContent = on
+                ? 'Averaging ON: each row is the mean of ' + n + ' cycles (~' + (n * 6) + ' ms, up to ~' + (167 / n).toFixed(1) + ' rows/s)'
+                : 'Averaging OFF: every sample cycle is logged raw (up to ~167 rows/s)';
+        }
+
+        function setAveraging() {
+            var checkbox = document.getElementById('avgCheckbox');
+            var n = document.getElementById('avgSamples').value;
+            fetch('/averaging?enabled=' + (checkbox.checked ? 1 : 0) + '&n=' + encodeURIComponent(n)).then(function(response) {
+                return response.text().then(function(text) {
+                    if (!response.ok) throw new Error(text || ('HTTP ' + response.status));
+                    return text;
+                });
+            }).then(function(data) {
+                logDebug(data);
+                describeAveraging();
+            }).catch(function(error) {
+                logDebug('Error setting averaging: ' + error.message);
+                alert('Error setting averaging: ' + error.message);
+                syncAveragingFromServer();  // Show what the device is actually doing
+            });
+        }
+
+        function syncAveragingFromServer() {
+            fetch('/status').then(function(r) { return r.json(); }).then(function(data) {
+                if (data.averagingEnabled === undefined) return;
+                document.getElementById('avgCheckbox').checked = data.averagingEnabled;
+                document.getElementById('avgSamples').value = data.averageSamples;
+                describeAveraging();
+            }).catch(function() {});
+        }
+
         function updateHeaterStatus(state, target, pidOn, output) {
             heaterState = state;
             pidEnabled = pidOn;
@@ -710,6 +753,11 @@ function resetSystem() {
                     updateDetailedDebug('Initial readings: V=' + data.voltage + ' V, T=' + data.temperature + ' °C');
                     serverLoggingState = data.loggingEnabled; // Set initial state
                     updateLoggingStatusUI(); // Update UI based on initial state
+                    if (data.averagingEnabled !== undefined) {
+                        document.getElementById('avgCheckbox').checked = data.averagingEnabled;
+                        document.getElementById('avgSamples').value = data.averageSamples;
+                    }
+                    describeAveraging();
                 })
                 .catch(error => {
                     updateDetailedDebug('Basic connectivity FAILED: ' + error.message);
@@ -725,6 +773,7 @@ function resetSystem() {
             }, 5000);
             setInterval(updateHeaterRuntime, 1000);
             updateLoggingStatusUI(); // Ensure buttons are correct on load
+            describeAveraging();
             listLogFiles();
             logDebug('Initialization complete');
         };

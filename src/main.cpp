@@ -188,8 +188,10 @@ void loop() {
 
 
 void readSensors() {
-  // One ADC read per call, cycling channel 0 -> 1 -> 2. A row is completed
-  // after the AUX read, using the values from the two reads before it.
+  // One ADC read per call, cycling channel 0 -> 1 -> 2. A sample cycle is
+  // completed after the AUX read, using the values from the two reads before
+  // it, and handed to addSampleCycle(): with averaging off it is logged as one
+  // row, with averaging on averageSamples cycles become one row.
   static float lastVoltage = 0.0;
   static int lastVoltageAdc = 0;
   static float lastTemperature = 0.0;
@@ -225,21 +227,23 @@ void readSensors() {
     selectMuxChannel(AUX_THERMISTOR_CHANNEL);
     delayMicroseconds(50);
     int adcValue = analogRead(ADC_PIN);
-    readings[bufferIndex].timestamp = lastThermistorTime;
-    readings[bufferIndex].voltage = lastVoltage;
-    readings[bufferIndex].voltageAdc = lastVoltageAdc;
-    readings[bufferIndex].temperature = lastTemperature;
-    readings[bufferIndex].thermistorAdc = lastThermistorAdc;
-    readings[bufferIndex].auxThermistorAdc = adcValue;
-    readings[bufferIndex].heaterState = lastHeaterState;  // Store as boolean: is heater active?
-    readings[bufferIndex].pidEnabled = lastPidEnabled;  // PID in control (vs manual/off)
-    readings[bufferIndex].pidValue = lastDutyCycle;  // Store actual PWM duty cycle percentage
-    readings[bufferIndex].targetTemp = lastTargetTemp;
-    totalReadings++;
+    SensorReading cycle;
+    cycle.timestamp = lastThermistorTime;
+    cycle.voltage = lastVoltage;
+    cycle.voltageAdc = lastVoltageAdc;
+    cycle.temperature = lastTemperature;
+    cycle.thermistorAdc = lastThermistorAdc;
+    cycle.auxThermistorAdc = adcValue;
+    cycle.heaterState = lastHeaterState;  // Is the heater active?
+    cycle.pidEnabled = lastPidEnabled;    // PID in control (vs manual/off)
+    cycle.pidValue = lastDutyCycle;       // Actual PWM duty cycle percentage
+    cycle.targetTemp = lastTargetTemp;
+    cycle.samples = 1;
     #if DEBUG_ADC
-    if (totalReadings % 500 == 0) {
-      Serial.print("Sensor Reading #");
-      Serial.print(totalReadings);
+    static unsigned long cycleCount = 0;
+    if (++cycleCount % 500 == 0) {
+      Serial.print("Sample cycle #");
+      Serial.print(cycleCount);
       Serial.print(": V=");
       Serial.print(lastVoltage, 4);
       Serial.print("V, T=");
@@ -249,14 +253,8 @@ void readSensors() {
       Serial.println(")");
     }
     #endif
-    bufferIndex++;
-    if (bufferIndex >= BUFFER_SIZE) {
-      Serial.print("Buffer full, writing to file... ");
-      bufferIndex = 0;
-      bufferFull = true;
-      writeBufferToFile();
-      Serial.println("done");
-    }
+    // Logged as a raw row, or added to the running average (data_manager.cpp)
+    addSampleCycle(cycle);
     currentSensorChannel = VOLTAGE_CHANNEL;
   }
 }
@@ -281,7 +279,10 @@ void printDebugStats() {
     Serial.print("Data Logging: "); Serial.println(dataLoggingEnabled ? "ENABLED" : "PAUSED");
     Serial.print("WiFi Status: AP Mode - Connected stations: "); Serial.println(WiFi.softAPgetStationNum());
     Serial.print("WebSocket clients: "); Serial.println(webSocket.connectedClients());
-    Serial.print("Total sensor readings: "); Serial.println(totalReadings);
+    Serial.print("Total logged rows: "); Serial.println(totalReadings);
+    Serial.print("Averaging: ");
+    if (averagingEnabled) { Serial.print("ON, "); Serial.print(averageSamples); Serial.println(" sample cycles per row"); }
+    else { Serial.println("OFF (raw rows)"); }
     Serial.print("Current buffer index: "); Serial.print(bufferIndex); Serial.print("/"); Serial.print(BUFFER_SIZE); Serial.print(" ("); Serial.print((bufferIndex * 100) / BUFFER_SIZE); Serial.println("% full)");
     Serial.print("WebSocket messages sent: "); Serial.println(totalWebSocketMessages);
     

@@ -191,4 +191,4 @@ OK
 - PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
 - AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
 - Temperature accuracy: approximately ±1.5–2 °C after calibration (ESP8266 ADC non-linearity; see README.md, "Calibration")
-- Logging: 50-row buffer written to the SD card, ~91 bytes per row (16 columns). A new 50 MB file about every 55 min at the full rate.
+- Logging: 50-row buffer written to the SD card, ~93 bytes per row (17 columns). A new 50 MB file about every 54 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).

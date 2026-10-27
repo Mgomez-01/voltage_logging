@@ -87,16 +87,23 @@
 //   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
 //   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output,
 //                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-//                   aux_temp,aux_adc,aux_v
-//                   (CSV_HEADER in data_manager.cpp; ~91 bytes per row)
+//                   aux_temp,aux_adc,aux_v,samples
+//                   (CSV_HEADER in data_manager.cpp; ~93 bytes per raw row)
 //     temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
 //     aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
-//     *_adc        = raw ADC counts (0-1023)
+//     *_adc        = raw ADC counts (0-1023), or mean counts (2 decimals)
+//                    when averaged
+//     samples      = sample cycles in the row: 1 = raw, N = averaged
 //     *_v          = adc / 1024 * 3.2 * ADC_CALIBRATION_GAIN, the A0 voltage
 //                    each temperature is calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
 //     kp, ki, kd   = gains in effect; /pid/params flushes the buffer before
 //                    changing them
+//   Averaging (oversampling), set from the web page or /averaging?enabled=&n=
+//     averagingEnabled        = false  off: log every sample cycle raw
+//     DEFAULT_AVERAGE_SAMPLES = 32     cycles per averaged row (~0.2 s)
+//     MIN/MAX_AVERAGE_SAMPLES = 2/100
+//     Counts are averaged, then converted. Resets to off at boot.
 //   MAX_WRITE_TIME = 5000 ms       A single SD write is abandoned after 5 s;
 //                                  the watchdog is fed every 5 rows
 //   If the SD card is not ready at boot, no log file is created. /start

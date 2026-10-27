@@ -41,9 +41,11 @@ extern int currentSensorChannel;
 // Function declarations
 void setupMultiplexer();
 void selectMuxChannel(int channel);
-float thermistorAdcToVoltage(int adcValue);  // A0 voltage (0-3.2 V, calibrated) used by the conversion
-float convertThermistorToTemperature(int adcValue);     // PID Temp Sensor
-float convertAuxThermistorToTemperature(int adcValue);  // AUX Temp Sensor
+// ADC counts are float so averaged (oversampled) counts keep their fraction;
+// a raw analogRead() count converts implicitly.
+float thermistorAdcToVoltage(float adcValue);  // A0 voltage (0-3.2 V, calibrated) used by the conversion
+float convertThermistorToTemperature(float adcValue);     // PID Temp Sensor
+float convertAuxThermistorToTemperature(float adcValue);  // AUX Temp Sensor
 void testSensorChannels();
 
 #endif // SENSOR_MANAGER_H

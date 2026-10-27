@@ -96,8 +96,10 @@ def fit(points, r25_nominal):
 def average_log(path, t_from=None, t_to=None, timeline=False):
     """Average thermistor_adc / aux_adc from a CSV log, or the 'PID Temp Sensor (Ch1): N'
     lines of a serial capture. t_from/t_to (seconds since boot) limit a CSV log to the
-    settled part of a test; timeline prints 10 s averages to find it."""
+    settled part of a test; timeline prints 10 s averages to find it. Averaged rows
+    (samples > 1) hold mean counts and are weighted by their sample count."""
     pid, aux = [], []
+    pid_w, aux_w = [], []
     bins = {}
     header = None
     for line in open(path, errors="replace"):
@@ -111,40 +113,43 @@ def average_log(path, t_from=None, t_to=None, timeline=False):
                 row = dict(zip(header, cols))
                 ts = int(row["timestamp"]) / 1000.0
                 if timeline and "thermistor_adc" in row and "aux_adc" in row:
-                    bins.setdefault(int(ts // 10), []).append((int(row["thermistor_adc"]), int(row["aux_adc"])))
+                    bins.setdefault(int(ts // 10), []).append((float(row["thermistor_adc"]), float(row["aux_adc"])))
                 if (t_from is not None and ts < t_from) or (t_to is not None and ts > t_to):
                     continue
+                w = int(row.get("samples", "1") or 1)
                 if "thermistor_adc" in row:
-                    pid.append(int(row["thermistor_adc"]))
+                    pid.append(float(row["thermistor_adc"])); pid_w.append(w)
                 if "aux_adc" in row:
-                    aux.append(int(row["aux_adc"]))
+                    aux.append(float(row["aux_adc"])); aux_w.append(w)
             continue
         m = re.search(r"PID Temp Sensor \(Ch1\): (\d+)", line)
         if m:
-            pid.append(int(m.group(1)))
+            pid.append(int(m.group(1))); pid_w.append(1)
         m = re.search(r"AUX Temp Sensor \(Ch2\): (\d+)", line)
         if m:
-            aux.append(int(m.group(1)))
+            aux.append(int(m.group(1))); aux_w.append(1)
     if timeline and bins:
         print("10 s averages (pick a flat stretch, then rerun with --from/--to):")
         print(f"  {'seconds':>11} {'rows':>5} {'PID mean':>9} {'min-max':>9} {'AUX mean':>9} {'min-max':>9}")
         for k in sorted(bins):
             p = [x[0] for x in bins[k]]; a = [x[1] for x in bins[k]]
-            print(f"  {k*10:5d}-{k*10+10:<5d} {len(p):5d} {statistics.mean(p):9.2f} {min(p):4d}-{max(p):<4d} "
-                  f"{statistics.mean(a):9.2f} {min(a):4d}-{max(a):<4d}")
+            print(f"  {k*10:5d}-{k*10+10:<5d} {len(p):5d} {statistics.mean(p):9.2f} {min(p):4g}-{max(p):<4g} "
+                  f"{statistics.mean(a):9.2f} {min(a):4g}-{max(a):<4g}")
         print()
     if t_from is not None or t_to is not None:
         print(f"Window: {t_from if t_from is not None else 'start'} s to {t_to if t_to is not None else 'end'} s")
-    for name, vals in (("PID (thermistor_adc)", pid), ("AUX (aux_adc)", aux)):
+    def wmean(vals, wts):
+        return sum(v * w for v, w in zip(vals, wts)) / sum(wts)
+    for name, vals, wts in (("PID (thermistor_adc)", pid, pid_w), ("AUX (aux_adc)", aux, aux_w)):
         if vals:
             sd = statistics.pstdev(vals)
-            print(f"{name:21s} n={len(vals):6d}  mean={statistics.mean(vals):8.2f}  "
-                  f"sd={sd:5.2f}  min={min(vals)}  max={max(vals)}")
+            print(f"{name:21s} rows={len(vals):6d}  cycles={sum(wts):7d}  mean={wmean(vals, wts):8.2f}  "
+                  f"sd={sd:5.2f}  min={min(vals):g}  max={max(vals):g}")
         else:
             print(f"{name:21s} no readings found")
     if pid or aux:
-        p = f"{statistics.mean(pid):.1f}" if pid else "-"
-        a = f"{statistics.mean(aux):.1f}" if aux else "-"
+        p = f"{wmean(pid, pid_w):.2f}" if pid else "-"
+        a = f"{wmean(aux, aux_w):.2f}" if aux else "-"
         print(f"\nFor a known temperature T, use:  --point T:{p}:{a}")
 
 

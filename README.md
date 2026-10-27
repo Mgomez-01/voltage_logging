@@ -131,7 +131,7 @@ Sensor data is never stored in internal flash.
 1. **Insert the SD card** and power the board. The serial monitor should show `SD card initialized.` and `Created new data file: data_N.log`.
 2. **Connect to WiFi**: SSID `ESP8266_VoltageLogger`, password `voltage123`.
 3. **Open** `http://192.168.4.1`.
-4. **Start Logging**. Logging is paused at boot. If the SD card wasn't ready at boot, Start Logging tries to set it up again and shows an error if it still can't create a log file.
+4. **Start Logging**. Logging is paused at boot. Tick **Average** first to log averaged rows instead of every raw sample (see Averaging below). If the SD card wasn't ready at boot, Start Logging tries to set it up again and shows an error if it still can't create a log file.
 5. **Heater control** (optional):
    - Set the target temperature (0-130 °C, default 45 °C)
    - Enable PID, or use manual ON (100%) / OFF (0%)
@@ -144,10 +144,12 @@ Sensor data is never stored in internal flash.
 Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... When a file reaches 50 MB, logging continues in the next free name. The files are CSV text:
 
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969
-259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
+64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
+259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312,1
+3391012,0.017422,44.667,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,46.521,717.53,2.2423,32
 ```
+The first two rows are raw (`samples` = 1). The third is an averaged row (32 sample cycles), so its ADC columns are mean counts with 2 decimals.
 
 | # | Column | Unit | Description |
 |---|---|---|---|
@@ -157,20 +159,28 @@ timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,th
 | 4 | heater_state | 0/1 | 1 if heater PWM duty > 0 |
 | 5 | target_temp | °C | PID setpoint |
 | 6 | pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
-| 7 | voltage_adc | counts | Raw ADC reading for channel 0 (0-1023) |
-| 8 | thermistor_adc | counts | Raw ADC reading for channel 1, PID Temp Sensor (0-1023) |
+| 7 | voltage_adc | counts | ADC reading for channel 0 (0-1023). Mean of the row's sample cycles when averaged (2 decimals) |
+| 8 | thermistor_adc | counts | ADC reading for channel 1, PID Temp Sensor (0-1023). Mean when averaged |
 | 9 | thermistor_v | V | PID Temp Sensor voltage at A0, `thermistor_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `temperature` is calculated from. |
 | 10 | pid_enabled | 0/1 | 1 if the PID was controlling the heater, 0 for manual ON/OFF. Tells PID-at-100% apart from manual ON. |
 | 11 | kp | - | PID proportional gain in effect (3 decimals) |
 | 12 | ki | - | PID integral gain in effect |
 | 13 | kd | - | PID derivative gain in effect |
 | 14 | aux_temp | °C | **AUX Temp Sensor**, channel 2 (3 decimals, -999 = open/short or not connected) |
-| 15 | aux_adc | counts | Raw ADC reading for channel 2, AUX Temp Sensor (0-1023) |
+| 15 | aux_adc | counts | ADC reading for channel 2, AUX Temp Sensor (0-1023). Mean when averaged |
 | 16 | aux_v | V | AUX Temp Sensor voltage at A0, `aux_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `aux_temp` is calculated from. |
+| 17 | samples | cycles | Sample cycles in the row: 1 = raw, N = averaged (see Averaging) |
 
-Columns 1-6 are the original format. Columns 7-16 were added after them, so scripts that read by column name keep working.
+Columns 1-6 are the original format. Columns 7-17 were added after them, so scripts that read by column name keep working.
 
-Each row is one pass over channels 0 → 1 → 2, so its three readings are taken within ~4 ms of each other.
+A raw row is one pass over channels 0 → 1 → 2, so its three readings are taken within ~4 ms of each other.
+
+### Averaging (oversampling)
+The **Average** checkbox under Data Logging Control sets what each row holds:
+- **Off (default):** every sample cycle is logged raw, as above, up to ~167 rows/s. `samples` = 1.
+- **On:** N consecutive sample cycles (default 32, settable 2-100 next to the checkbox) are combined into one row. The ADC counts are averaged, and `temperature`, `aux_temp`, `voltage` and the `*_v` columns are calculated from the mean counts. Averaging the counts (not the temperatures) lets the ADC noise resolve fractions of a count, as with the boiling-water mean of 77.73. `timestamp` is the middle of the window. `heater_state`, `pid_output`, `target_temp` and `pid_enabled` are from the last cycle in it. `samples` = N.
+
+With N = 32 a row covers ~0.2 s, at up to ~5 rows/s. Averaging improves resolution and noise, but not accuracy: the ±1.5–2 °C calibration limit still applies. The setting can change while logging (a partly filled average is dropped), and it resets to off at boot. The PID and the safety checks use the latest logged row, so with averaging on they also see averaged temperatures. `/averaging?enabled=1&n=32` sets it over HTTP, and `/status` reports `averagingEnabled` and `averageSamples`.
 
 **Checking the temperatures:** with VS = 3.32 V and RL = 320 kΩ (the A0 load), both use:
 ```
@@ -187,12 +197,12 @@ That reproduces `temperature` and `aux_temp` to within a few thousandths of a °
 
 **Gains:** the kp/ki/kd columns hold the gains when the row was sampled. Changing them with `/pid/params` saves the buffered rows first, so rows never show gains they weren't sampled under. The serial monitor warns if that save fails.
 
-At the maximum rate this is about 91 bytes × 167 rows/s ≈ 55 MB per hour, so a new 50 MB file starts about every 55 minutes.
+With averaging off, the maximum rate is about 93 bytes × 167 rows/s ≈ 56 MB per hour, so a new 50 MB file starts about every 54 minutes. With averaging on at N = 32 it is about 2 MB per hour.
 
 ## Technical Details
 
 ### Sampling
-- One ADC read every 2 ms, cycling channels 0 → 1 → 2: up to ~167 readings/s per channel and ~167 CSV rows/s (one row per cycle)
+- One ADC read every 2 ms, cycling channels 0 → 1 → 2: up to ~167 readings/s per channel and ~167 CSV rows/s (one row per cycle), or ~167/N rows/s with averaging on
 - 50-row RAM buffer, appended to the SD card when full
 - WebSocket update every 500 ms
 - Real rates are a little lower because sampling pauses during SD writes and the 1 s debug print

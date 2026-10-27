@@ -21,6 +21,7 @@ void setupWebServer() {
   server.on("/status", handleStatus);
   server.on("/start", handleStartLogging);
   server.on("/stop", handleStopLogging);
+  server.on("/averaging", handleAveraging);
 
   // Heater control routes
   server.on("/relay/on", handleRelayOn);
@@ -176,7 +177,11 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{LOGGING_STATUS_COLOR_INITIAL}}", dataLoggingEnabled ? "#28a745" : "#dc3545");
         line.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
-        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 per second per channel)" : "Click 'Start Logging' to begin data collection");
+        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 sample cycles per second)" : "Click 'Start Logging' to begin data collection");
+        line.replace("{{AVG_CHECKED_ATTR}}", averagingEnabled ? "checked" : "");
+        line.replace("{{AVG_SAMPLES_INITIAL}}", String(averageSamples));
+        line.replace("{{AVG_SAMPLES_MIN}}", String(MIN_AVERAGE_SAMPLES));
+        line.replace("{{AVG_SAMPLES_MAX}}", String(MAX_AVERAGE_SAMPLES));
         line.replace("{{RELAY_STATUS_TEXT_INITIAL}}", heaterDutyCycle > 0 ? "ON" : "OFF");
         line.replace("{{HEATER_INDICATOR_CLASS_INITIAL}}", heaterDutyCycle > 0 ? "heater-on" : "heater-off");
         line.replace("{{PWM_DUTY_CYCLE_INITIAL}}", String(heaterDutyCycle, 1));
@@ -295,6 +300,8 @@ void handleStatus() {
   doc["pidKp"] = pidKp;
   doc["pidKi"] = pidKi;
   doc["pidKd"] = pidKd;
+  doc["averagingEnabled"] = averagingEnabled;
+  doc["averageSamples"] = averageSamples;
   String jsonString;
   serializeJson(doc, jsonString);
   server.send(200, "application/json", jsonString);
@@ -327,6 +334,7 @@ void handleStartLogging() {
   lastSample = millis();
   lastWebUpdate = millis();
   currentSensorChannel = VOLTAGE_CHANNEL;
+  resetRowAverage();  // Don't mix cycles from before the pause into the first averaged row
   server.send(200, "text/plain", "Sensor logging started");
   Serial.print("HTTP: Sensor logging STARTED - writing to ");
   Serial.println(logFileName);
@@ -338,6 +346,36 @@ void handleStopLogging() {
   flushDataBuffer();
   server.send(200, "text/plain", "Sensor logging stopped");
   Serial.println("HTTP: Sensor logging STOPPED - readings paused");
+}
+
+// /averaging?enabled=0|1[&n=2..100]
+// Turns averaging (oversampling) on or off. Off: every sample cycle is logged
+// raw (samples = 1). On: n sample cycles are averaged into each row. Rows
+// already in the buffer keep their own samples value, so nothing is flushed;
+// only a partly filled average is dropped.
+void handleAveraging() {
+  if (!server.hasArg("enabled") && !server.hasArg("n")) {
+    server.send(400, "text/plain", "Missing enabled or n parameter");
+    return;
+  }
+  if (server.hasArg("n")) {
+    long n = server.arg("n").toInt();
+    if (n < MIN_AVERAGE_SAMPLES || n > MAX_AVERAGE_SAMPLES) {
+      server.send(400, "text/plain", "n must be " + String(MIN_AVERAGE_SAMPLES) + "-" + String(MAX_AVERAGE_SAMPLES));
+      return;
+    }
+    averageSamples = (uint8_t)n;
+  }
+  if (server.hasArg("enabled")) {
+    averagingEnabled = server.arg("enabled") == "1" || server.arg("enabled") == "true";
+  }
+  resetRowAverage();
+  String msg = averagingEnabled
+      ? "Averaging ON: " + String(averageSamples) + " sample cycles per row"
+      : String("Averaging OFF: every sample cycle logged raw");
+  Serial.print("HTTP: ");
+  Serial.println(msg);
+  server.send(200, "text/plain", msg);
 }
 
 void handleRelayOn() {

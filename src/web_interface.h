@@ -44,5 +44,6 @@ void handleHeaterStatus();
 void handleListLogs();
 void handleDeleteLog();
 void handleSystemReset();
+void handleAveraging();
 
 #endif // WEB_INTERFACE_H

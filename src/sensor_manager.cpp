@@ -109,14 +109,14 @@ void selectMuxChannel(int channel) {
 // applied. Used by both temperature conversions below and logged as
 // thermistor_v / aux_v, so each logged voltage is exactly the one its
 // temperature was calculated from.
-float thermistorAdcToVoltage(int adcValue) {
+float thermistorAdcToVoltage(float adcValue) {
   return (adcValue / 1024.0) * ADC_FULL_SCALE_VOLTAGE * ADC_CALIBRATION_GAIN;
 }
 
 // Beta-equation conversion for a divider VS -- seriesResistor -- node -- NTC -- GND,
 // with the board's ADC_INPUT_RESISTANCE in parallel with the NTC while sampling.
 // Returns -999 for an open, shorted or saturated sensor.
-static float ntcAdcToCelsius(int adcValue, float seriesResistor, float nominalResistance,
+static float ntcAdcToCelsius(float adcValue, float seriesResistor, float nominalResistance,
                              float nominalTempC, float beta) {
   if (adcValue <= 1) return -999;                  // Shorted NTC (or no reading)
   if (adcValue >= ADC_SATURATED) return -999;      // At full scale: value unknown
@@ -140,18 +140,18 @@ static float ntcAdcToCelsius(int adcValue, float seriesResistor, float nominalRe
 }
 
 // PID Temp Sensor (channel 1)
-float convertThermistorToTemperature(int adcValue) {
+float convertThermistorToTemperature(float adcValue) {
   return ntcAdcToCelsius(adcValue, SERIES_RESISTOR, THERMISTOR_NOMINAL,
                          TEMPERATURE_NOMINAL, B_COEFFICIENT);
 }
 
 // AUX Temp Sensor (channel 2)
-float convertAuxThermistorToTemperature(int adcValue) {
+float convertAuxThermistorToTemperature(float adcValue) {
   return ntcAdcToCelsius(adcValue, AUX_SERIES_RESISTOR, AUX_THERMISTOR_NOMINAL,
                          AUX_TEMPERATURE_NOMINAL, AUX_B_COEFFICIENT);
 }
 
-static void printTestTemperature(const char* label, int channel, float (*convert)(int)) {
+static void printTestTemperature(const char* label, int channel, float (*convert)(float)) {
   selectMuxChannel(channel);
   delay(10);
   int reading = analogRead(A0);

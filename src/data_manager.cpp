@@ -7,11 +7,12 @@
 // appended so older analysis scripts that read by column name keep working.
 // temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
 // aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
+// samples = sample cycles in the row (1 = raw; N = averaged, *_adc are means)
 // Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
 const char CSV_HEADER[] PROGMEM =
     "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
     "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,"
-    "aux_temp,aux_adc,aux_v";
+    "aux_temp,aux_adc,aux_v,samples";
 
 static void printCsvHeader(File& f) {
   f.println(FPSTR(CSV_HEADER));
@@ -32,6 +33,79 @@ bool bufferFull = false;
 
 // File rotation settings
 const unsigned long MAX_FILE_SIZE = 50000000;  // 50MB max per file (prevents 4GB FAT32 limit)
+
+// Averaging (oversampling), see data_manager.h
+bool averagingEnabled = false;                 // Off: log every sample cycle raw
+const uint8_t MIN_AVERAGE_SAMPLES = 2;
+const uint8_t MAX_AVERAGE_SAMPLES = 100;
+const uint8_t DEFAULT_AVERAGE_SAMPLES = 32;    // 32 cycles x ~6 ms = ~0.2 s per row
+uint8_t averageSamples = DEFAULT_AVERAGE_SAMPLES;
+
+// Running sums of the raw counts for the row being averaged
+static uint32_t avgVoltageSum = 0;
+static uint32_t avgThermistorSum = 0;
+static uint32_t avgAuxSum = 0;
+static uint8_t avgCount = 0;
+static unsigned long avgFirstTime = 0;
+
+void resetRowAverage() {
+  avgVoltageSum = 0;
+  avgThermistorSum = 0;
+  avgAuxSum = 0;
+  avgCount = 0;
+}
+
+// Put one finished row in the RAM buffer; write the buffer to the SD card when full
+static void storeRow(const SensorReading& row) {
+  readings[bufferIndex] = row;
+  totalReadings++;
+  bufferIndex++;
+  if (bufferIndex >= BUFFER_SIZE) {
+    Serial.print("Buffer full, writing to file... ");
+    bufferIndex = 0;
+    bufferFull = true;
+    writeBufferToFile();
+    Serial.println("done");
+  }
+}
+
+void addSampleCycle(const SensorReading& cycle) {
+  if (!averagingEnabled) {
+    if (avgCount > 0) resetRowAverage();
+    storeRow(cycle);
+    return;
+  }
+
+  // Averaging: sum the raw counts. Averaging counts (not temperatures) keeps the
+  // conversion's open/short checks working and lets noise resolve fractions of
+  // a count.
+  if (avgCount == 0) avgFirstTime = cycle.timestamp;
+  avgVoltageSum += (uint32_t)cycle.voltageAdc;
+  avgThermistorSum += (uint32_t)cycle.thermistorAdc;
+  avgAuxSum += (uint32_t)cycle.auxThermistorAdc;
+  avgCount++;
+  if (avgCount < averageSamples) return;
+
+  // Heater/PID state and target come from the last cycle; the timestamp is the
+  // middle of the window (first and last PID Temp Sensor samples).
+  SensorReading row = cycle;
+  float n = avgCount;
+  row.timestamp = avgFirstTime + (cycle.timestamp - avgFirstTime) / 2;
+  row.voltageAdc = avgVoltageSum / n;
+  row.thermistorAdc = avgThermistorSum / n;
+  row.auxThermistorAdc = avgAuxSum / n;
+  row.voltage = row.voltageAdc / 1024.0;
+  row.temperature = convertThermistorToTemperature(row.thermistorAdc);
+  row.samples = avgCount;
+  resetRowAverage();
+  storeRow(row);
+}
+
+// Raw rows print whole counts, as before; averaged rows print the mean to 2 decimals
+static void printAdc(File& f, const SensorReading& r, float adc) {
+  if (r.samples > 1) f.print(adc, 2);
+  else f.print((int)adc);
+}
 
 // Write operation safety
 bool writeInProgress = false;
@@ -199,9 +273,9 @@ void writeBufferToFile() {
         dataFile.print(readings[i].pidValue, 2);
         // Columns added after the original six (see CSV_HEADER)
         dataFile.print(",");
-        dataFile.print(readings[i].voltageAdc);
+        printAdc(dataFile, readings[i], readings[i].voltageAdc);
         dataFile.print(",");
-        dataFile.print(readings[i].thermistorAdc);
+        printAdc(dataFile, readings[i], readings[i].thermistorAdc);
         dataFile.print(",");
         dataFile.print(thermistorAdcToVoltage(readings[i].thermistorAdc), 4);
         dataFile.print(",");
@@ -217,9 +291,11 @@ void writeBufferToFile() {
         dataFile.print(",");
         dataFile.print(aux, 3);
         dataFile.print(",");
-        dataFile.print(readings[i].auxThermistorAdc);
+        printAdc(dataFile, readings[i], readings[i].auxThermistorAdc);
         dataFile.print(",");
-        dataFile.println(thermistorAdcToVoltage(readings[i].auxThermistorAdc), 4);
+        dataFile.print(thermistorAdcToVoltage(readings[i].auxThermistorAdc), 4);
+        dataFile.print(",");
+        dataFile.println(readings[i].samples);
 
         if (aux > -50 && aux < 150) {
             if (aux < batchAuxMin) batchAuxMin = aux;

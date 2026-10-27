@@ -32,7 +32,7 @@ The SD card and heater wiring are in [WIRING_GUIDE.md](../WIRING_GUIDE.md).
 - One ADC read every 2 ms, cycling channel 0 → 1 → 2
 - Each channel is read up to ~167 times per second
 - After each switch the firmware waits 10 µs + 50 µs for the signal to settle
-- Each AUX read completes one row (voltage, PID Temp Sensor and AUX Temp Sensor readings with their raw ADC counts, and the heater/PID state). That gives up to ~167 CSV rows per second, with the three readings in a row taken within ~4 ms of each other.
+- Each AUX read completes one sample cycle (voltage, PID Temp Sensor and AUX Temp Sensor readings with their raw ADC counts, and the heater/PID state). With averaging off, each cycle is one CSV row: up to ~167 rows per second, with the three readings in a row taken within ~4 ms of each other. With averaging on (checkbox on the web page), N cycles are averaged into one row. See [README.md](../README.md#averaging-oversampling).
 - The row's timestamp and heater/PID state are taken at the PID Temp Sensor read, the sample the PID uses
 - Rows collect in a 50-row RAM buffer, then are appended to the current log file on the SD card
 
@@ -88,8 +88,8 @@ Trade-off: the low resistance passes more current through the NTC. At 65 °C it 
 ## CSV format
 Each boot creates a new file on the SD card (`data.log`, `data_1.log`, ...):
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
+64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
 ```
 `temperature` is the PID Temp Sensor and `aux_temp` is the AUX Temp Sensor. Column details are in [README.md](../README.md#data-format).
 

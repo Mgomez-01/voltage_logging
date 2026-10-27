@@ -184,6 +184,10 @@ SAMPLE_INTERVAL         2 ms        One ADC read every 2 ms, cycling C0->C1->C2
 Per-channel rate        ~167 Hz max Each channel read every 6 ms
 CSV row rate            ~167 rows/s One row per C0+C1+C2 cycle (theoretical max);
                                     the three readings are within ~4 ms
+Averaging (checkbox)    off / N=32  Off: every cycle logged raw. On: N cycles
+                                    (2-100, default 32 = ~0.2 s) averaged into
+                                    one row, ~167/N rows/s; counts averaged
+                                    first, then converted
 Mux settle              10 + 50 us  Before each analogRead
 BUFFER_SIZE (window)    50 rows     RAM buffer, written to SD when full
                                     (~every 300 ms at the full rate). Reduced
@@ -274,7 +278,7 @@ File rotation ........ When the current file reaches 50 MB (MAX_FILE_SIZE =
                        50,000,000 B), a new data_N.log is started with a header
 Header ............... timestamp,voltage,temperature,heater_state,target_temp,pid_output,
                        voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-                       aux_temp,aux_adc,aux_v
+                       aux_temp,aux_adc,aux_v,samples
 Write strategy ....... 50-row RAM buffer -> open file, append 50 rows, close.
                        Also flushed on Stop Logging and on low-heap auto-stop.
 Write protection ..... 5 s max per write; watchdog fed every 5 rows; skips a
@@ -296,8 +300,8 @@ CSV columns:
 | 5 | target_temp  | deg C | 2 decimals | PID setpoint at sample time           |
 | 6 | pid_output   | %     | 2 decimals | Actual heater PWM duty, 0-100 (= PID  |
 |   |              |       |            | output under PID, 100 in manual ON)   |
-| 7 | voltage_adc  | counts| integer    | Raw ADC reading, channel 0 (0-1023)   |
-| 8 | thermistor_  | counts| integer    | Raw ADC reading, channel 1 (0-1023)   |
+| 7 | voltage_adc  | counts| integer *  | ADC reading, channel 0 (0-1023)       |
+| 8 | thermistor_  | counts| integer *  | ADC reading, channel 1 (0-1023)       |
 |   | adc          |       |            |                                       |
 | 9 | thermistor_v | V     | 4 decimals | A0 voltage = adc/1024 * 3.2 * gain;   |
 |   |              |       |            | the exact value the temperature is    |
@@ -309,13 +313,15 @@ CSV columns:
 |13 | kd           | -     | 3 decimals |  change, so rows are never mislabeled)|
 |14 | aux_temp     | deg C | 3 decimals | AUX Temp Sensor, channel 2            |
 |   |              |       |            | (-999 = open/short / not connected)   |
-|15 | aux_adc      | counts| integer    | Raw ADC reading, channel 2 (0-1023)   |
+|15 | aux_adc      | counts| integer *  | ADC reading, channel 2 (0-1023)       |
 |16 | aux_v        | V     | 4 decimals | AUX A0 voltage = adc/1024 * 3.2 * gain|
 |   |              |       |            | the exact value aux_temp is           |
 |   |              |       |            | calculated from                       |
+|17 | samples      | cycles| integer    | 1 = raw row, N = averaged row         |
 +---+--------------+-------+------------+---------------------------------------+
+* Mean count with 2 decimals in averaged rows (samples > 1).
 
-Columns 1-6 are the original format; 7-16 were added after them.
+Columns 1-6 are the original format; 7-17 were added after them.
 thermistor_v and aux_v let you re-check every temperature:
   P = Rs * V / (3.32 - V);  R = P * 320k / (320k - P)
   1/T = 1/298.15 + ln(R/R25)/B  (T in K)
@@ -325,15 +331,17 @@ thermistor_v and aux_v let you re-check every temperature:
   (Logs from before the circuit model used V = adc/1024 * 3.3 and
    R = 100k * V / (3.3 - V); recalculate them from the raw *_adc columns.)
 
-Example rows (two of your logged rows, as the corrected firmware logs them:
-room temperature, then stable at 45 C):
-  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v
-  64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969
-  259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312
+Example rows: two of your logged rows as the corrected firmware logs them
+(raw: room temperature, then stable at 45 C), then an averaged row:
+  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
+  64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
+  259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312,1
+  3391012,0.017422,44.667,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,46.521,717.53,2.2423,32   (averaged, 32 cycles)
 
 Data volume (theoretical maximum rate):
-  ~91 bytes/row x ~167 rows/s = ~15 KB/s = ~55 MB/hour
-  -> a new 50 MB file about every 55 min; an 8 GB card holds ~145 h
+  Averaging off: ~93 bytes/row x ~167 rows/s = ~15.5 KB/s = ~56 MB/hour
+  -> a new 50 MB file about every 54 min; an 8 GB card holds ~143 h
+  Averaging on (N = 32): ~5 rows/s, ~2 MB/hour
   (Real rate is lower, see section 5. Timestamps restart at 0 in each
    boot's file, so files don't mix runs.)
 
