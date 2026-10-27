@@ -106,6 +106,8 @@
 //     Counts are averaged, then converted. Resets to off at boot.
 //   MAX_WRITE_TIME = 5000 ms       A single SD write is abandoned after 5 s;
 //                                  the watchdog is fed every 5 rows
+//   Every log file starts with the header: a write to an empty or deleted
+//   current file writes the header first.
 //   If the SD card is not ready at boot, no log file is created. /start
 //   (Start Logging) retries the SD setup and refuses with HTTP 503 if it
 //   still fails. /data.csv with no ?file= downloads the current log file.

@@ -109,7 +109,9 @@ def average_log(path, t_from=None, t_to=None, timeline=False):
             continue
         if header and line and line[0].isdigit():
             cols = line.split(",")
-            if len(cols) == len(header):
+            # >= so rows with columns added after the header (e.g. an older header
+            # pasted onto a newer file) still parse by the header's names
+            if len(cols) >= len(header):
                 row = dict(zip(header, cols))
                 ts = int(row["timestamp"]) / 1000.0
                 if timeline and "thermistor_adc" in row and "aux_adc" in row:

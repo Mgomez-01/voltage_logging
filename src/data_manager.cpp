@@ -221,6 +221,15 @@ void writeBufferToFile() {
         Serial.print(openTime);
         Serial.println("ms (slow SD card?)");
     }
+
+    // Every log file starts with the CSV header. A file that is empty here was
+    // just (re)created: e.g. the current log file was deleted from the web page
+    // or the card, and SD.open() made a new, empty one under the same name.
+    if (dataFile.size() == 0) {
+        printCsvHeader(dataFile);
+        Serial.print("Log file was empty or missing - wrote CSV header to ");
+        Serial.println(logFileName);
+    }
     
     // Feed watchdog after successfully opening file
     feedWatchdog();
