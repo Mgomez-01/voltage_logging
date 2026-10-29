@@ -146,6 +146,11 @@ b) PID Temp Sensor (channel C1) - controls the heater
        1/T = 1/298.15 + ln(R/R25)/B     (calibrated: PID R25 = 97,886 ohm,
                                          B = 3910; AUX R25 = 10,631 ohm, B = 4096)
        T(C) = T(K) - 273.15
+       T = T - correction(T)            hotplate correction table, linear
+                                        interpolation (0 at 0 C and 95.7 C):
+         reading  0   30   40   50   55   60   65   70   75   80   85  95.7
+         PID      0 2.29 2.01 1.61 1.33 1.06 0.95 1.01 1.13 1.23 1.25  0
+         AUX      0 3.99 3.87 3.61 3.39 3.13 2.95 2.86 2.80 2.74 2.67  0
    - Before this model: PID read ~5 C hot (its ~50 k divider is pulled ~14 %
      low by the load), AUX ~4 C cold (3.3 vs 3.2 V full scale). The 10 C gap
      at room temperature drops to ~0.01 C with the model.
@@ -327,6 +332,7 @@ thermistor_v and aux_v let you re-check every temperature:
   1/T = 1/298.15 + ln(R/R25)/B  (T in K)
   PID: Rs = 98k, R25 = 97,886, B = 3910   AUX: Rs = 2.0k, R25 = 10,631, B = 4096
   (logs from before the 2026-10-25 calibration: R25 = 100k / 10k, B = 3950)
+  then subtract the hotplate correction for that reading (section 4b)
   -> matches the logged temperatures to within a few thousandths of a C.
   (Logs from before the circuit model used V = adc/1024 * 3.3 and
    R = 100k * V / (3.3 - V); recalculate them from the raw *_adc columns.)
@@ -334,9 +340,9 @@ thermistor_v and aux_v let you re-check every temperature:
 Example rows: two of your logged rows as the corrected firmware logs them
 (raw: room temperature, then stable at 45 C), then an averaged row:
   timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
-  64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
-  259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312,1
-  3391012,0.017422,44.667,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,46.521,717.53,2.2423,32   (averaged, 32 cycles)
+  64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1
+  259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1
+  3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32   (averaged, 32 cycles)
 
 Data volume (theoretical maximum rate):
   Averaging off: ~93 bytes/row x ~167 rows/s = ~15.5 KB/s = ~56 MB/hour
@@ -404,11 +410,15 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    the logged "voltage" is the real voltage / 3.2 on those boards.
    Calibrated 2026-10-25 against an ice bath (0 C) and boiling water
    (95.7 C at ~1300 m, SLC): R25/B fitted per sensor, see section 4b.
-   ACCURACY: approximately +/-1.5-2 C between those points. The ESP8266
-   ADC is non-linear (a multimeter check at 45 C showed it ~1.7 % high at
-   mid-scale vs ~0.6 % near full scale). In the same 45 C water: PID
-   44.7 C, AUX 46.5 C. Still to do: check at 25-85 C on a known-good
-   hotplate, then retune the PID gains. The calibrated PID reading is ~2.0 C lower than the original
+   Between those points the ESP8266 ADC is non-linear (~1.7 % high at
+   mid-scale vs ~0.6 % near full scale), so a hotplate sweep (2026-10-28,
+   29-84 C, both sensors side by side under Kapton + thermal compound)
+   gave a per-sensor correction table (section 4b).
+   ACCURACY: the two sensors agree to a few tenths of a C (they had
+   differed by a steady 1.87 +/- 0.24 C); after correction both match
+   the hotplate to 0.35 C RMS. Absolute: about +/-1.5 C, limited by the
+   hotplate as a reference (a multimeter check in water at 45 C pointed
+   2-4 C higher). Still to do: retune the PID gains. The calibrated PID reading is ~2.0 C lower than the original
    firmware at 45 C, so the same setpoint now holds the part ~2.0 C hotter.
 6. If the SD card isn't ready at boot, no log file is created. Insert the
    card and press Start Logging (it retries), or reboot.

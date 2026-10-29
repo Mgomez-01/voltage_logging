@@ -54,6 +54,7 @@
 //   Conversion: V = adc/1024 * 3.2 * gain
 //               P = Rs * V / (VS - V);  R = P * RL / (RL - P)
 //               1/T = 1/(T25 + 273.15) + ln(R/R25)/B
+//               T = T - correction(T)   (hotplate table, see below)
 //   -999 when adc <= 1 (short), adc >= 1023 (saturated), or R > 20 x R25
 //   (open: a disconnected PID NTC reads ~2.54 V because of the 320k load)
 //
@@ -74,6 +75,14 @@
 // Calibration (2026-10-25): R25/B fitted from ice bath 0 C (PID 660.8, AUX
 // 1002.5 counts) and boiling water 95.7 C at ~1300 m, SLC (PID 77.7, AUX 293.1).
 // Refit with tools/calibrate_thermistors.py.
+//
+// Hotplate correction (2026-10-28), applied after the Beta equation:
+//   T = T - correction(T), linear interpolation, 0 outside 0-95.7 C
+//   reading:  0   30   40   50   55   60   65   70   75   80   85  95.7
+//   PID:      0 2.29 2.01 1.61 1.33 1.06 0.95 1.01 1.13 1.23 1.25  0
+//   AUX:      0 3.99 3.87 3.61 3.39 3.13 2.95 2.86 2.80 2.74 2.67  0
+//   (PID_CORRECTION / AUX_CORRECTION; APPLY_TEMPERATURE_CORRECTION = true)
+//   Sensors agree to a few tenths of a C; absolute about +/-1.5 C.
 
 // =============================================================================
 // DATA LOGGING - SD CARD (src/data_manager.cpp)

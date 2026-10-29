@@ -51,8 +51,10 @@ R = P * RL / (RL - P)                NTC alone (RL = 320k)
 
 PID Temp Sensor: Rs = 98k (measured), R25 = 97886 (fitted), B = 3910 (fitted)
 AUX Temp Sensor: Rs = 2.0k,           R25 = 10631 (fitted), B = 4096 (fitted)
+
+Then: T = T - correction(T)          per-sensor hotplate correction table (README.md, "Calibration")
 ```
-The load matters mostly for the PID Temp Sensor, whose ~50 kΩ divider is pulled ~14 % low. Leaving it out made that sensor read ~5 °C hot, while the 3.3 V vs 3.2 V full scale made the AUX Temp Sensor read ~4 °C cold. R25 and B were then fitted per sensor from an ice bath (0 °C) and boiling water (95.7 °C at ~1300 m, Salt Lake City) with `tools/calibrate_thermistors.py`. See README.md, "Calibration".
+The load matters mostly for the PID Temp Sensor, whose ~50 kΩ divider is pulled ~14 % low. Leaving it out made that sensor read ~5 °C hot, while the 3.3 V vs 3.2 V full scale made the AUX Temp Sensor read ~4 °C cold. R25 and B were then fitted per sensor from an ice bath (0 °C) and boiling water (95.7 °C at ~1300 m, Salt Lake City) with `tools/calibrate_thermistors.py`. A per-sensor correction table from a hotplate sweep (29–84 °C) is applied after the Beta equation. See README.md, "Calibration".
 
 -999 is logged when a sensor reads as shorted (ADC ≤ 1), saturated (ADC ≥ 1023: AUX unplugged, or below about -11 °C), or open (NTC resistance above 20 × R25, colder than about -30 °C). The last case catches an unplugged PID Temp Sensor, which reads ~2.54 V (ADC ~813) because of the A0 load, not the rail voltage.
 
@@ -89,7 +91,7 @@ Trade-off: the low resistance passes more current through the NTC. At 65 °C it 
 Each boot creates a new file on the SD card (`data.log`, `data_1.log`, ...):
 ```csv
 timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
-64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
+64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1
 ```
 `temperature` is the PID Temp Sensor and `aux_temp` is the AUX Temp Sensor. Column details are in [README.md](../README.md#data-format).
 
@@ -103,8 +105,8 @@ Channel 2: AUX Temp Sensor (MF55 10k NTC, not used by PID)
 ...
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V
-Channel 1 (PID Temp Sensor): 460 -> 25.05°C
-Channel 2 (AUX Temp Sensor): 889 -> 25.08°C
+Channel 1 (PID Temp Sensor): 442 -> 25.03°C
+Channel 2 (AUX Temp Sensor): 864 -> 24.95°C
 ```
 (Nearest counts to 25 °C for this board, with the calibrated constants.) A channel with no thermistor connected shows `N/A (no thermistor connected)`.
 
@@ -112,7 +114,7 @@ Channel 2 (AUX Temp Sensor): 889 -> 25.08°C
 - C1 at 25 °C: ~1.68 V unloaded, ~1.45 V while sampled; a meter shows something in between while the ESP8266 runs
 - C2 at 25 °C: ~2.75 V; ~1.7 V at 65 °C
 - Touch each thermistor: its temperature should rise within a few seconds and the other should not
-- In the same stirred water, both sensors should agree within about 2 °C. At 45 °C they read 44.7 °C (PID) and 46.5 °C (AUX). The calibration is approximate to ±1.5–2 °C because of ESP8266 ADC non-linearity (README.md, "Calibration"). In air the AUX Temp Sensor also reads ~1 °C high from self-heating
+- Side by side at the same spot (same contact), both sensors should agree within a few tenths of a °C. Absolute accuracy is about ±1.5 °C (README.md, "Calibration"). In air the AUX Temp Sensor also reads up to ~1 °C high from self-heating
 - If channels read the same value, check S0-S3 and that EN is tied to 3.3 V
 
 ## Expansion

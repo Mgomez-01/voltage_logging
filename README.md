@@ -56,7 +56,22 @@ python3 tools/calibrate_thermistors.py --point 0:660.8:1002.5 --point 95.7:77.7:
 ```
 The tool reads the circuit constants from `src/sensor_manager.cpp` and prints the new R25/B lines. The fit only holds for the circuit constants and resistors it was made with. Change any of them and you need to recalibrate.
 
-**Accuracy: approximately ±1.5–2 °C between 0 °C and 95 °C.** Readings are exact at the two calibration points, but in between the ESP8266 ADC is not linear. A multimeter check at ~45 °C found the ADC reading ~1.7 % high at mid-scale and only ~0.6 % high near full scale, and the two-point fit can't follow that. In the same 45 °C water, the PID sensor read 44.7 °C and the AUX sensor 46.5 °C. Treat temperatures as approximate to about ±1.5–2 °C, and the difference between the two sensors as meaningful only above ~2 °C. A per-point check against a known-good hotplate (25–85 °C) is planned. A correction curve for the ADC (measured with a pot and a multimeter) would tighten this.
+Between those two points the ESP8266 ADC is not linear: a multimeter check at ~45 °C found it reading ~1.7 % high at mid-scale and only ~0.6 % high near full scale. A two-point fit can't follow that, so the hotplate correction below takes out what remains.
+
+### Hotplate correction
+After the Beta equation, each reading is corrected by subtracting an error looked up from the reading itself (linear interpolation between points, no correction outside 0–95.7 °C). The tables come from a hotplate sweep (2026-10-28): both sensors side by side on the plate surface under Kapton tape in thermal compound, 20 setpoints from 29 °C to 84 °C, referenced to the hotplate's displayed temperature and smoothed (the display reads whole degrees). Ice and boiling water stay exact.
+
+| Reading (°C) | 0 | 30 | 40 | 50 | 55 | 60 | 65 | 70 | 75 | 80 | 85 | 95.7 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| PID correction | 0 | 2.29 | 2.01 | 1.61 | 1.33 | 1.06 | 0.95 | 1.01 | 1.13 | 1.23 | 1.25 | 0 |
+| AUX correction | 0 | 3.99 | 3.87 | 3.61 | 3.39 | 3.13 | 2.95 | 2.86 | 2.80 | 2.74 | 2.67 | 0 |
+
+`PID_CORRECTION` / `AUX_CORRECTION` in `src/sensor_manager.cpp` hold these values. `APPLY_TEMPERATURE_CORRECTION = false` turns the correction off.
+
+**Accuracy:**
+- **Between the two sensors: a few tenths of a °C.** Before the correction AUX read 1.87 ± 0.24 °C above PID at every hotplate step, and in the 45 °C water test. After it, both match the hotplate to 0.35 °C RMS (worst 0.9 °C) over 29–84 °C.
+- **Absolute: about ±1.5 °C**, limited by the hotplate as a reference. Ice and boiling water agree with the corrected readings, but a multimeter check in water at ~45 °C pointed 2–4 °C higher than the hotplate scale. The hotplate could not be cross-checked before it was returned.
+- `tools/calibrate_thermistors.py` fits only the Beta part (R25/B). Its "now reads" values don't include this correction.
 
 If you add a filter capacitor on C1 or C2, the node no longer sees the full 320 kΩ load at the moment of the sample. Set `ADC_INPUT_RESISTANCE` to ~960000 (320k × 3 channels) and recalibrate.
 
@@ -145,9 +160,9 @@ Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... W
 
 ```csv
 timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
-64659,0.016602,22.090,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,24.139,895,2.7969,1
-259599,0.016602,42.836,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,43.388,746,2.3312,1
-3391012,0.017422,44.667,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,46.521,717.53,2.2423,32
+64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1
+259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1
+3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32
 ```
 The first two rows are raw (`samples` = 1). The third is an averaged row (32 sample cycles), so its ADC columns are mean counts with 2 decimals.
 
@@ -180,7 +195,7 @@ The **Average** checkbox under Data Logging Control sets what each row holds:
 - **Off (default):** every sample cycle is logged raw, as above, up to ~167 rows/s. `samples` = 1.
 - **On:** N consecutive sample cycles (default 32, settable 2-100 next to the checkbox) are combined into one row. The ADC counts are averaged, and `temperature`, `aux_temp`, `voltage` and the `*_v` columns are calculated from the mean counts. Averaging the counts (not the temperatures) lets the ADC noise resolve fractions of a count, as with the boiling-water mean of 77.73. `timestamp` is the middle of the window. `heater_state`, `pid_output`, `target_temp` and `pid_enabled` are from the last cycle in it. `samples` = N.
 
-With N = 32 a row covers ~0.2 s, at up to ~5 rows/s. Averaging improves resolution and noise, but not accuracy: the ±1.5–2 °C calibration limit still applies. The setting can change while logging (a partly filled average is dropped), and it resets to off at boot. The PID and the safety checks use the latest logged row, so with averaging on they also see averaged temperatures. `/averaging?enabled=1&n=32` sets it over HTTP, and `/status` reports `averagingEnabled` and `averageSamples`.
+With N = 32 a row covers ~0.2 s, at up to ~5 rows/s. Averaging improves resolution and noise, but not accuracy: the ±1.5 °C absolute accuracy (see Calibration) still applies. The setting can change while logging (a partly filled average is dropped), and it resets to off at boot. The PID and the safety checks use the latest logged row, so with averaging on they also see averaged temperatures. `/averaging?enabled=1&n=32` sets it over HTTP, and `/status` reports `averagingEnabled` and `averageSamples`.
 
 **Checking the temperatures:** with VS = 3.32 V and RL = 320 kΩ (the A0 load), both use:
 ```
@@ -191,7 +206,7 @@ R = P × RL / (RL − P)        NTC resistance
 - PID Temp Sensor: V = `thermistor_v`, Rs = 98 kΩ, R25 = 97 886 Ω, B = 3910
 - AUX Temp Sensor: V = `aux_v`, Rs = 2.0 kΩ, R25 = 10 631 Ω, B = 4096
 
-That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. Logs written before the 2026-10-25 calibration used R25 = 100 kΩ / 10 kΩ and B = 3950. The raw counts let you redo either conversion with a different calibration.
+then subtract the hotplate correction for that reading (see Calibration). That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. Logs written before the 2026-10-25 calibration used R25 = 100 kΩ / 10 kΩ and B = 3950. The raw counts let you redo either conversion with a different calibration.
 
 **Older log files** (before the circuit model was added) used V = adc/1024 × 3.3, R = 100k × V / (3.3 − V) with no A0 load, and `thermistor_v` / `aux_v` on that 3.3 V scale. Recalculate their temperatures from `thermistor_adc` and `aux_adc` with the formulas above.
 

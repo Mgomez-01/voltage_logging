@@ -56,9 +56,9 @@ const float NTC_OPEN_RATIO = 20.0;             // R > 20 x R25 (colder than ~-30
 //   boiling water 95.7 °C:    PID  77.7 counts, AUX  293.1 counts
 //   (boiling point for Salt Lake City, ~1300 m; settled plateau of data_4.log)
 // Refit with: python3 tools/calibrate_thermistors.py --point 0:660.8:1002.5 --point 95.7:77.7:293.1
-// Accuracy is approximately +/-1.5-2 °C between the two points: the ESP8266 ADC
-// is non-linear (~1.7 % high at mid-scale, ~0.6 % near full scale, measured
-// with a multimeter at 45 °C), and a two-point fit can't follow it.
+// Between the two points the ESP8266 ADC is non-linear (~1.7 % high at
+// mid-scale, ~0.6 % near full scale), which a two-point fit can't follow; the
+// hotplate correction tables below take out what remains.
 // The fits absorb the thermistor tolerance and any remaining ADC/circuit error,
 // so they only hold with the circuit constants above and the resistors fitted.
 
@@ -79,6 +79,56 @@ const float AUX_THERMISTOR_NOMINAL = 10631.0;  // R25, fitted (datasheet: 10000)
 const float AUX_TEMPERATURE_NOMINAL = 25.0;    // 25°C
 const float AUX_B_COEFFICIENT = 4096.0;        // Beta, fitted (datasheet B25/50: 3950, MF55 103F3950)
 const float AUX_SERIES_RESISTOR = 2000.0;      // 2.0k series resistor (measured 2.00k on the board)
+
+// ---------------------------------------------------------------------------
+// Hotplate correction (2026-10-28). After the Beta conversion above, each
+// sensor's reading is corrected by subtracting an error looked up from its
+// reading (linear interpolation between points; 0 outside 0-95.7 °C).
+// Measured with both sensors side by side on a hotplate surface (Kapton tape +
+// thermal compound), 20 setpoints from 29 to 84 °C, referenced to the
+// hotplate's displayed temperature and smoothed (the display reads whole
+// degrees). Ice (0 °C) and boiling water (95.7 °C) stay exact (correction 0).
+// After correction both sensors match the hotplate to 0.35 °C RMS (max 0.9 °C)
+// over 29-84 °C. Absolute accuracy is limited by the hotplate itself: a
+// multimeter check in water at 45 °C pointed ~2-4 °C higher than the hotplate
+// scale, so treat absolute temperatures as about +/-1.5 °C; the difference
+// between the two sensors is good to a few tenths of a degree.
+// Set APPLY_TEMPERATURE_CORRECTION to false to log the Beta-equation values only.
+// ---------------------------------------------------------------------------
+const bool APPLY_TEMPERATURE_CORRECTION = true;
+
+struct CorrectionPoint {
+  float reading;     // Beta-equation reading (°C)
+  float correction;  // Subtracted from the reading (°C)
+};
+
+// PID Temp Sensor (channel 1)
+static const CorrectionPoint PID_CORRECTION[] = {
+  {0.0, 0.00}, {30.0, 2.29}, {40.0, 2.01}, {50.0, 1.61}, {55.0, 1.33},
+  {60.0, 1.06}, {65.0, 0.95}, {70.0, 1.01}, {75.0, 1.13}, {80.0, 1.23},
+  {85.0, 1.25}, {95.7, 0.00}
+};
+
+// AUX Temp Sensor (channel 2)
+static const CorrectionPoint AUX_CORRECTION[] = {
+  {0.0, 0.00}, {30.0, 3.99}, {40.0, 3.87}, {50.0, 3.61}, {55.0, 3.39},
+  {60.0, 3.13}, {65.0, 2.95}, {70.0, 2.86}, {75.0, 2.80}, {80.0, 2.74},
+  {85.0, 2.67}, {95.7, 0.00}
+};
+
+static float applyCorrection(float reading, const CorrectionPoint* table, int count) {
+  if (!APPLY_TEMPERATURE_CORRECTION || reading == -999) return reading;
+  if (reading <= table[0].reading || reading >= table[count - 1].reading) return reading;
+  for (int i = 1; i < count; i++) {
+    if (reading <= table[i].reading) {
+      const CorrectionPoint& a = table[i - 1];
+      const CorrectionPoint& b = table[i];
+      float f = (reading - a.reading) / (b.reading - a.reading);
+      return reading - (a.correction + f * (b.correction - a.correction));
+    }
+  }
+  return reading;
+}
 
 // Current sensor channel being read
 int currentSensorChannel = VOLTAGE_CHANNEL; // Start with voltage channel
@@ -139,16 +189,18 @@ static float ntcAdcToCelsius(float adcValue, float seriesResistor, float nominal
   return steinhart;
 }
 
-// PID Temp Sensor (channel 1)
+// PID Temp Sensor (channel 1): Beta equation, then the hotplate correction
 float convertThermistorToTemperature(float adcValue) {
-  return ntcAdcToCelsius(adcValue, SERIES_RESISTOR, THERMISTOR_NOMINAL,
-                         TEMPERATURE_NOMINAL, B_COEFFICIENT);
+  float t = ntcAdcToCelsius(adcValue, SERIES_RESISTOR, THERMISTOR_NOMINAL,
+                            TEMPERATURE_NOMINAL, B_COEFFICIENT);
+  return applyCorrection(t, PID_CORRECTION, sizeof(PID_CORRECTION) / sizeof(PID_CORRECTION[0]));
 }
 
-// AUX Temp Sensor (channel 2)
+// AUX Temp Sensor (channel 2): Beta equation, then the hotplate correction
 float convertAuxThermistorToTemperature(float adcValue) {
-  return ntcAdcToCelsius(adcValue, AUX_SERIES_RESISTOR, AUX_THERMISTOR_NOMINAL,
-                         AUX_TEMPERATURE_NOMINAL, AUX_B_COEFFICIENT);
+  float t = ntcAdcToCelsius(adcValue, AUX_SERIES_RESISTOR, AUX_THERMISTOR_NOMINAL,
+                            AUX_TEMPERATURE_NOMINAL, AUX_B_COEFFICIENT);
+  return applyCorrection(t, AUX_CORRECTION, sizeof(AUX_CORRECTION) / sizeof(AUX_CORRECTION[0]));
 }
 
 static void printTestTemperature(const char* label, int channel, float (*convert)(float)) {

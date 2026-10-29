@@ -149,15 +149,15 @@ PWM control via MOSFET (AOD4144) for smooth heater power regulation
 A0 pin number: 17
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V
-Channel 1 (PID Temp Sensor): 460 -> 25.05°C
-Channel 2 (AUX Temp Sensor): 889 -> 25.08°C
+Channel 1 (PID Temp Sensor): 442 -> 25.03°C
+Channel 2 (AUX Temp Sensor): 864 -> 24.95°C
 ...
 Initializing data file... SD card initialized.
 Created new data file: data_3.log
 OK
 ```
 
-(ADC 460 and 889 are the nearest counts to 25 °C for this board with the calibrated thermistor constants: 98 kΩ and 2.0 kΩ dividers on a 3.32 V rail, with the 320 kΩ A0 load and 3.2 V full scale. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
+(ADC 442 and 864 are the nearest counts to 25 °C for this board with the calibrated thermistor constants and hotplate correction: 98 kΩ and 2.0 kΩ dividers on a 3.32 V rail, with the 320 kΩ A0 load and 3.2 V full scale. The PWM runs at 32 Hz with ESP8266 core 3.1.2. You should see a ~31 ms period on a scope.)
 
 ## Troubleshooting
 
@@ -190,5 +190,5 @@ OK
 - Voltage resolution: 10-bit (~1 mV per step on the 0-1 V scale)
 - PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
 - AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
-- Temperature accuracy: approximately ±1.5–2 °C after calibration (ESP8266 ADC non-linearity; see README.md, "Calibration")
+- Temperature accuracy: about ±1.5 °C absolute, a few tenths of a °C between the two sensors (ice/boiling calibration + hotplate correction; see README.md, "Calibration")
 - Logging: 50-row buffer written to the SD card, ~93 bytes per row (17 columns). A new 50 MB file about every 54 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).

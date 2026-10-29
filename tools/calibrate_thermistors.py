@@ -11,6 +11,13 @@ The circuit constants (rail voltage, series resistors, A0 load, full scale,
 calibration gain) are read from src/sensor_manager.cpp, so the script always
 matches the firmware.
 
+The firmware also applies a hotplate correction table after the Beta
+equation (PID_CORRECTION / AUX_CORRECTION in src/sensor_manager.cpp). This
+script fits only the Beta part; its "now reads" values do not include that
+correction. Refitting R25/B changes the raw readings the table was measured
+against, so redo the hotplate table (or set APPLY_TEMPERATURE_CORRECTION to
+false) after a refit.
+
 Usage
 -----
   # Average the raw counts in a log file (or a pasted serial capture):
