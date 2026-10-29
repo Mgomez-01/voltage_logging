@@ -26,6 +26,7 @@ extern float pidOutput;
 extern float pidError;
 extern float pidLastError;
 extern float pidIntegral;
+extern float pidLastInput;  // Last measured temperature, for derivative on measurement
 extern const unsigned long PID_INTERVAL; // PID update interval in ms
 extern unsigned long lastPIDUpdate;
 
@@ -34,5 +35,6 @@ void initializeHeaterPWM();
 void setHeaterPower(float dutyCyclePercent);
 void checkHeaterSafety();
 void updatePIDController();
+void resetPIDState();      // Clear integral/derivative memory (on enable or gain change)
 
 #endif // HEATER_CONTROLLER_H

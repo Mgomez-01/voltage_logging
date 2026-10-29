@@ -120,7 +120,7 @@ make deploy ENV=wemos_d1_mini # same for a Wemos D1 mini
 Or step by step:
 ```bash
 pio run -e esp8266 -t upload       # firmware (use -e wemos_d1_mini for a D1 mini)
-pio run -e esp8266 -t uploadfs     # web page template (data/ folder)
+pio run -e esp8266 -t uploadfs     # web pages (data/ folder: main page + /tune page)
 pio device monitor -b 115200
 ```
 
@@ -137,7 +137,7 @@ PlatformIO installs the two external libraries automatically from `platformio.in
 | Storage | Holds | How it gets there |
 |---|---|---|
 | **microSD card** | All sensor data logs (`data*.log`) | Written by the firmware while logging |
-| Internal flash (LittleFS) | Only the web page template (`data/index.template.html`) | `pio run -t uploadfs` / `make filesystem` |
+| Internal flash (LittleFS) | The web pages (`data/index.template.html`, `data/tune.html`) and saved PID gains (`/pid.json`, written by the board) | Pages: `pio run -t uploadfs` / `make filesystem`. This also erases `/pid.json` |
 
 Sensor data is never stored in internal flash.
 
@@ -233,14 +233,29 @@ With averaging off, the maximum rate is about 93 bytes × 167 rows/s ≈ 56 MB p
 |---|---|
 | PWM pin / range | GPIO16 (D0), 0-1000 (0.1%) |
 | PWM frequency | 32 Hz (`analogWriteFreq(32)`). The core docs list 100 Hz as the minimum, but core 3.1.2's default PWM engine uses 32 Hz. |
-| Kp / Ki / Kd | 2.2 / 0.25 / 0.15 |
+| Kp / Ki / Kd | 2.3 / 0.045 / 0 (interim, from a model; replaced by gains saved from the tuning page) |
 | PID interval | 500 ms |
-| Integral clamp | ±100 (±25% output) |
+| Anti-windup | Integral term limited to the 0–100 % output range, and frozen while the output is saturated |
+| Derivative | On the measurement (no kick when the setpoint changes) |
 | Default target | 45 °C |
 | Max safe temperature | 130 °C |
 | Max continuous heater time | 30 min |
 
 The PID uses the latest logged PID Temp Sensor reading, or reads that thermistor directly when the buffer is empty, so it works with logging on or off. Its output (0-100%) sets the PWM duty directly. The AUX Temp Sensor is never used by the PID.
+
+Before 2026-10-29 the integral was clamped to ±100, which with Ki = 0.25 capped it at 25 % output. Above ~60 °C the sheet needs more power than that to hold, so it settled several degrees below the setpoint (e.g. 88 °C for a 92 °C setpoint). With the old gains (2.2 / 0.25 / 0.15) the corrected PID overshoots ~10 °C, so the defaults changed and the gains should be tuned on the fixture.
+
+### PID tuning page (`/tune`)
+Open `http://192.168.4.1/tune` (or the link on the main page), with the whole fixture set up as for a measurement. Close the main page while tuning: each open page keeps its own connection to the board. The tests run on the board, so a dropped Wi-Fi link can't leave the heater on.
+
+1. **Power step test (PID off).** The heater holds a start power until the sheet settles (at least 2 min, trend flatter than 0.15 °C/min), steps to a second power, records the response until it settles, then turns off. Pick powers around the working range: about 25 → 35 % holds the sheet near 85–100 °C.
+2. **Model and gains.** The page fits a delay, time constant and gain (°C per % power) to the step response, and suggests PI gains (Skogestad SIMC rule) for three speeds. "Critically damped (recommended)" aims for no overshoot.
+3. **Setpoint test (PID on).** Runs the PID with chosen gains through up to 4 setpoints, holding each, then turns the heater off. It reports overshoot, settling time (±0.5 °C on a 10 s average) and the remaining error for each step.
+4. **Apply / Save.** "Apply" sets the running gains. "Save" also stores them on the board's flash (`/pid.json`), loaded at boot. Uploading the filesystem image (`make filesystem`) erases the saved gains: note them first.
+
+Safety during tests: the heater turns off if the sheet passes 120 °C, the PID sensor faults, an emergency shutdown happens, a test runs over 25 min (under the 30 min heater limit), or the heater/PID is changed from the main page. "Stop test" turns the heater off at any time. Test data (1 s samples, PID and AUX temperatures, heater power) is kept in RAM and can be downloaded as CSV. Turn logging on as well to keep a full record on the SD card.
+
+Endpoints: `/tune/step?p1=&p2=&max=`, `/tune/setpoint?sp=80,90,95&hold=&kp=&ki=&kd=`, `/tune/stop`, `/tune/status`, `/tune/data?from=`, `/pid/save`.
 
 ### Safety
 - Over-temperature (> 130 °C) and sensor-fault shutdown, based on the PID Temp Sensor. These checks use the latest logged reading, so they only run while logging is on. Keep logging running whenever the heater is on. The AUX Temp Sensor is logged and displayed only; it does not trigger a shutdown.

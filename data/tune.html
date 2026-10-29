@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PID Tuning</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#1d2329; --muted:#5f6b76; --line:#d8dee4;
+          --pid:#c0392b; --aux:#e67e22; --duty:#2471a3; --model:#1e8449; --accent:#2471a3; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#22313f; color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  header h1 { font-size:20px; margin:0; }
+  header a { color:#cfe3f5; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { font-size:17px; margin:0 0 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:flex-end; }
+  label { font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:3px; }
+  input { font-size:15px; padding:6px 8px; border:1px solid var(--line); border-radius:5px; width:100px; }
+  input.wide { width:150px; }
+  button { font-size:15px; padding:8px 14px; border:0; border-radius:5px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.stop { background:#c0392b; }
+  button.secondary { background:#5f6b76; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .status { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:8px; }
+  .stat { background:var(--bg); border-radius:6px; padding:8px 10px; }
+  .stat .k { font-size:12px; color:var(--muted); }
+  .stat .v { font-size:18px; font-weight:600; }
+  #message { margin-top:10px; padding:8px 10px; border-radius:6px; background:#eef4fa; font-size:14px; }
+  #message.bad { background:#fdecea; }
+  #message.good { background:#e9f7ef; }
+  canvas { width:100%; height:340px; display:block; }
+  .legend { font-size:13px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  .legend span::before { content:""; display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle; background:currentColor; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:13px; }
+  .note { font-size:13px; color:var(--muted); margin:6px 0 0; line-height:1.45; }
+  .rec { background:#e9f7ef; }
+  @media (max-width:600px) { canvas { height:260px; } input { width:86px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>PID Tuning (PID Temp Sensor / sheet)</h1>
+  <a href="/">&larr; Back to the logger</a>
+</header>
+<main>
+
+<div class="card">
+  <h2>Status</h2>
+  <div class="status">
+    <div class="stat"><div class="k">Test</div><div class="v" id="sState">-</div></div>
+    <div class="stat"><div class="k">Elapsed</div><div class="v" id="sElapsed">-</div></div>
+    <div class="stat"><div class="k">Sheet (PID sensor)</div><div class="v" id="sPid">-</div></div>
+    <div class="stat"><div class="k">Sample (AUX)</div><div class="v" id="sAux">-</div></div>
+    <div class="stat"><div class="k">Heater power</div><div class="v" id="sDuty">-</div></div>
+    <div class="stat"><div class="k">Sheet trend</div><div class="v" id="sSlope">-</div></div>
+    <div class="stat"><div class="k">Gains in use</div><div class="v" id="sGains" style="font-size:15px">-</div></div>
+  </div>
+  <div id="message">Connecting...</div>
+  <div class="row" style="margin-top:10px">
+    <button class="stop" id="stopBtn" onclick="stopTest()">Stop test (heater off)</button>
+    <button class="secondary" onclick="downloadCsv()">Download test data (CSV)</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Live plot</h2>
+  <canvas id="plot"></canvas>
+  <div class="legend">
+    <span style="color:var(--pid)">Sheet (PID sensor)</span>
+    <span style="color:var(--aux)">Sample (AUX)</span>
+    <span style="color:var(--duty)">Heater power (right axis)</span>
+    <span style="color:var(--model)">Fitted model / setpoint</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>1. Power step test (PID off)</h2>
+  <p class="note">Set up the whole fixture as for a measurement. The heater holds the first power until the sheet settles
+    (at least 2 min, flatter than 0.15 &deg;C/min), then steps to the second power and records the response until it settles again.
+    The heater then turns off. Pick powers that put the sheet around your working range: from the 2026-10-26 run,
+    about 25&ndash;35&nbsp;% holds the sheet near 85&ndash;100&nbsp;&deg;C. Repeat at a second range if the gains differ much.
+    The test stops if the sheet passes <span id="maxTemp">120</span>&nbsp;&deg;C.</p>
+  <div class="row">
+    <label>Start power (%)<input id="p1" type="number" value="25" min="0" max="80" step="1"></label>
+    <label>Step to (%)<input id="p2" type="number" value="35" min="0" max="80" step="1"></label>
+    <label>Max minutes per phase<input id="pmax" type="number" value="8" min="3" max="12" step="1"></label>
+    <button id="stepBtn" onclick="startStep()">Start power step test</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>2. Model and suggested gains</h2>
+  <div id="fitBox"><p class="note">Run a power step test. The model is fitted to the step response as it comes in.</p></div>
+</div>
+
+<div class="card">
+  <h2>3. Setpoint test (PID on)</h2>
+  <p class="note">Runs the PID with these gains through up to 4 setpoints (comma separated), holding each, then turns the heater off.
+    Overshoot, settling time (to &plusmn;0.5 &deg;C) and remaining error are measured for each step.</p>
+  <div class="row">
+    <label>Setpoints (&deg;C)<input id="sps" class="wide" type="text" value="80,90,95"></label>
+    <label>Hold (min)<input id="hold" type="number" value="5" min="1" max="10" step="1"></label>
+    <label>Kp<input id="kp" type="number" step="0.01"></label>
+    <label>Ki<input id="ki" type="number" step="0.001"></label>
+    <label>Kd<input id="kd" type="number" step="0.01"></label>
+    <button id="spBtn" onclick="startSetpoint()">Start setpoint test</button>
+  </div>
+  <div id="spBox" style="margin-top:10px"></div>
+  <div class="row" style="margin-top:10px">
+    <button class="secondary" onclick="applyGains()">Apply these gains now</button>
+    <button class="secondary" onclick="saveGains()">Apply and save as boot defaults</button>
+  </div>
+  <p class="note">"Apply" changes the running gains (lost at reboot). "Save" also stores them on the board's flash
+    (<code>/pid.json</code>), loaded at every boot. Uploading the filesystem image again erases the saved gains.</p>
+</div>
+
+</main>
+<script>
+"use strict";
+var data = [];          // [t_s, pidC|null, auxC|null, duty%]
+var gen = -1;
+var tuneStatus = null;
+var fit = null;
+var gainsPrefilled = false;
+
+function $(id) { return document.getElementById(id); }
+function fmt(v, d) { return (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(d); }
+
+function setMessage(text, kind) {
+  var m = $('message');
+  m.textContent = text;
+  m.className = kind || '';
+}
+
+function call(url) {
+  return fetch(url).then(function (r) {
+    return r.text().then(function (t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; });
+  });
+}
+
+// ---------------------------------------------------------------- polling
+function poll() {
+  fetch('/tune/status').then(function (r) { return r.json(); }).then(function (s) {
+    tuneStatus = s;
+    if (s.gen !== gen) { gen = s.gen; data = []; }
+    showStatus(s);
+    return loadData();
+  }).catch(function (e) {
+    setMessage('Lost contact with the board: ' + e.message, 'bad');
+  }).then(function () { setTimeout(poll, 2000); });
+}
+
+function loadData() {
+  if (!tuneStatus || data.length >= tuneStatus.count) { redraw(); return Promise.resolve(); }
+  return fetch('/tune/data?from=' + data.length).then(function (r) { return r.json(); }).then(function (d) {
+    if (d.gen !== gen) { gen = d.gen; data = []; return loadData(); }
+    if (d.from === data.length) data = data.concat(d.s);
+    if (data.length < d.count) return loadData();
+    redraw();
+  });
+}
+
+function showStatus(s) {
+  var names = { idle: 'Idle', step_settle: 'Step: settling', step_response: 'Step: response', setpoint: 'Setpoint test', done: 'Done', aborted: 'Stopped' };
+  $('sState').textContent = names[s.state] || s.state;
+  var el = s.elapsed || 0;
+  $('sElapsed').textContent = Math.floor(el / 60) + ':' + ('0' + Math.floor(el % 60)).slice(-2);
+  var last = data.length ? data[data.length - 1] : null;
+  $('sPid').textContent = last && last[1] !== null ? fmt(last[1], 2) + ' °C' : '-';
+  $('sAux').textContent = last && last[2] !== null ? fmt(last[2], 2) + ' °C' : '-';
+  $('sDuty').textContent = fmt(s.duty, 1) + ' %';
+  $('sSlope').textContent = s.slope !== undefined ? fmt(s.slope, 2) + ' °C/min' : '-';
+  $('sGains').textContent = 'Kp ' + fmt(s.kp, 3) + ' / Ki ' + fmt(s.ki, 4) + ' / Kd ' + fmt(s.kd, 3);
+  $('maxTemp').textContent = fmt(s.maxTemp, 0);
+  setMessage(s.message + (s.emergency ? ' (EMERGENCY SHUTDOWN ACTIVE: reset from the main page)' : ''),
+             s.state === 'aborted' || s.emergency ? 'bad' : (s.state === 'done' ? 'good' : ''));
+  $('stopBtn').disabled = !s.running;
+  $('stepBtn').disabled = s.running || s.emergency;
+  $('spBtn').disabled = s.running || s.emergency;
+  if (!gainsPrefilled) {
+    $('kp').value = Number(s.kp).toFixed(3); $('ki').value = Number(s.ki).toFixed(4); $('kd').value = Number(s.kd).toFixed(3);
+    gainsPrefilled = true;
+  }
+}
+
+// ---------------------------------------------------------------- actions
+function startStep() {
+  var q = '/tune/step?p1=' + $('p1').value + '&p2=' + $('p2').value + '&max=' + $('pmax').value;
+  call(q).then(function (t) { setMessage(t); fit = null; }).catch(function (e) { alert(e.message); });
+}
+function startSetpoint() {
+  var q = '/tune/setpoint?sp=' + encodeURIComponent($('sps').value) + '&hold=' + $('hold').value +
+          '&kp=' + $('kp').value + '&ki=' + $('ki').value + '&kd=' + $('kd').value;
+  call(q).then(function (t) { setMessage(t); }).catch(function (e) { alert(e.message); });
+}
+function stopTest() {
+  call('/tune/stop').then(function (t) { setMessage(t, 'bad'); }).catch(function (e) { alert(e.message); });
+}
+function applyGains() {
+  return call('/pid/params?kp=' + $('kp').value + '&ki=' + $('ki').value + '&kd=' + $('kd').value)
+    .then(function (t) { setMessage('Gains applied: Kp ' + $('kp').value + ', Ki ' + $('ki').value + ', Kd ' + $('kd').value, 'good'); })
+    .catch(function (e) { alert(e.message); throw e; });
+}
+function saveGains() {
+  applyGains().then(function () { return call('/pid/save'); })
+    .then(function (t) { setMessage(t, 'good'); }).catch(function (e) { alert(e.message); });
+}
+function useGains(kp, ki, kd) {
+  $('kp').value = kp.toFixed(3); $('ki').value = ki.toFixed(4); $('kd').value = kd.toFixed(3);
+  $('kp').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function downloadCsv() {
+  var rows = ['time_s,pid_temp_c,aux_temp_c,heater_power_pct'];
+  data.forEach(function (s) { rows.push(s.map(function (v) { return v === null ? '' : v; }).join(',')); });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
+  a.download = 'pid_tune_' + (tuneStatus ? tuneStatus.test : 'data') + '.csv';
+  a.click();
+}
+
+// ---------------------------------------------------------------- step response fit
+// First order plus dead time: y = y0 + D*(1 - exp(-(t - theta)/tau)) for t > theta.
+// Grid search over theta and tau; D (and y0) by linear least squares.
+function fitStep() {
+  if (!tuneStatus || tuneStatus.test !== 'step' || !tuneStatus.step || tuneStatus.step.at < 0) return null;
+  var tStep = tuneStatus.step.at, du = tuneStatus.step.p2 - tuneStatus.step.p1;
+  var before = data.filter(function (s) { return s[0] < tStep && s[0] >= tStep - 60 && s[1] !== null; });
+  var after = data.filter(function (s) { return s[0] >= tStep && s[1] !== null; });
+  if (before.length < 5 || after.length < 20) return null;
+  var y0 = before.reduce(function (a, s) { return a + s[1]; }, 0) / before.length;
+  var t = after.map(function (s) { return s[0] - tStep; });
+  var y = after.map(function (s) { return s[1] - y0; });
+  var span = t[t.length - 1];
+  var best = null;
+  for (var theta = 0; theta <= Math.min(90, span / 2); theta += 0.5) {
+    for (var lt = Math.log(3); lt <= Math.log(Math.max(30, span * 3)); lt += 0.04) {
+      var tau = Math.exp(lt), sff = 0, sfy = 0;
+      var f = t.map(function (ti) { return ti > theta ? 1 - Math.exp(-(ti - theta) / tau) : 0; });
+      for (var i = 0; i < f.length; i++) { sff += f[i] * f[i]; sfy += f[i] * y[i]; }
+      if (sff <= 0) continue;
+      var D = sfy / sff, sse = 0;
+      for (i = 0; i < f.length; i++) { var r = y[i] - D * f[i]; sse += r * r; }
+      if (!best || sse < best.sse) best = { theta: theta, tau: tau, D: D, sse: sse };
+    }
+  }
+  if (!best || Math.abs(best.D) < 0.3) return null;
+  best.y0 = y0; best.tStep = tStep; best.du = du;
+  best.K = best.D / du;                       // degC per % power
+  best.rms = Math.sqrt(best.sse / t.length);
+  best.coverage = span / best.tau;            // how many time constants were recorded
+  return best;
+}
+
+// SIMC PI tuning (Skogestad): Kc = tau / (K (tc + theta)), Ti = min(tau, 4 (tc + theta)).
+// Firmware form: output% = Kp e + Ki integral(e dt) + Kd (-dT/dt), so Kp = Kc, Ki = Kc / Ti.
+function gainsFor(m, tc) {
+  var kc = m.tau / (m.K * (tc + m.theta));
+  var ti = Math.min(m.tau, 4 * (tc + m.theta));
+  return { kp: kc, ki: kc / ti, kd: 0, tc: tc };
+}
+
+function showFit() {
+  fit = fitStep();
+  var box = $('fitBox');
+  if (!fit) {
+    if (tuneStatus && tuneStatus.test === 'step' && tuneStatus.step && tuneStatus.step.at >= 0)
+      box.innerHTML = '<p class="note">Collecting the step response...</p>';
+    return;
+  }
+  var floorTc = Math.max(5, fit.theta);
+  var options = [
+    ['Fast (may overshoot slightly)', gainsFor(fit, floorTc), false],
+    ['Critically damped (recommended)', gainsFor(fit, Math.max(5, 2 * fit.theta, fit.tau / 8)), true],
+    ['Smooth (slower, very robust)', gainsFor(fit, Math.max(10, 4 * fit.theta, fit.tau / 3)), false]
+  ];
+  var warn = [];
+  if (tuneStatus.step && !tuneStatus.step.settled1) warn.push('the sheet had not fully settled before the step');
+  if (fit.coverage < 3) warn.push('only ' + fit.coverage.toFixed(1) + ' time constants were recorded after the step (3+ is better: use a longer max time)');
+  if (fit.K <= 0) warn.push('the gain came out negative: check the powers and the sensor');
+  var html = '<div class="scroll"><table><tr><th>Delay (dead time)</th><th>Time constant</th><th>Gain</th><th>Temperature change</th><th>Fit error (RMS)</th></tr>' +
+    '<tr><td>' + fmt(fit.theta, 1) + ' s</td><td>' + fmt(fit.tau, 1) + ' s</td><td>' + fmt(fit.K, 3) + ' &deg;C per %</td><td>' +
+    fmt(fit.D, 2) + ' &deg;C for ' + fmt(fit.du, 1) + ' %</td><td>' + fmt(fit.rms, 2) + ' &deg;C</td></tr></table></div>';
+  if (warn.length) html += '<p class="note" style="color:#c0392b">Note: ' + warn.join('; ') + '.</p>';
+  html += '<div class="scroll"><table style="margin-top:10px"><tr><th>Option</th><th>Kp</th><th>Ki</th><th>Kd</th><th>Closed-loop time constant</th><th></th></tr>';
+  options.forEach(function (o) {
+    var g = o[1];
+    html += '<tr' + (o[2] ? ' class="rec"' : '') + '><td>' + o[0] + '</td><td>' + fmt(g.kp, 3) + '</td><td>' + fmt(g.ki, 4) +
+      '</td><td>0</td><td>' + fmt(g.tc, 0) + ' s</td><td><button class="secondary" onclick="useGains(' + g.kp + ',' + g.ki + ',0)">Use</button></td></tr>';
+  });
+  html += '</table></div><p class="note">PI control (Kd = 0): with a short delay compared with the time constant, derivative adds little and amplifies ADC noise. ' +
+    '"Use" copies the gains into the setpoint test below. Check them there with steps across your working range before saving.</p>';
+  box.innerHTML = html;
+}
+
+// ---------------------------------------------------------------- setpoint test metrics
+function showSetpointMetrics() {
+  var box = $('spBox');
+  if (!tuneStatus || tuneStatus.test !== 'setpoint' || !tuneStatus.sp) { box.innerHTML = ''; return; }
+  var sp = tuneStatus.sp, rows = '';
+  for (var i = 0; i < sp.list.length; i++) {
+    var t0 = sp.starts[i];
+    if (t0 < 0) continue;
+    var t1 = (i + 1 < sp.list.length && sp.starts[i + 1] >= 0) ? sp.starts[i + 1] : Infinity;
+    var seg = data.filter(function (s) { return s[0] >= t0 && s[0] < t1 && s[1] !== null; });
+    if (seg.length < 3) continue;
+    var target = sp.list[i], start = seg[0][1], up = target >= start;
+    // Settling: last time the 10 s average was outside +/-0.5 degC. Averaging
+    // keeps ADC noise (near 90 degC the sheet sensor has ~2 counts per degC)
+    // from looking like an unsettled loop.
+    var avg = seg.map(function (s) {
+      var w = seg.filter(function (o) { return Math.abs(o[0] - s[0]) <= 5; });
+      return w.reduce(function (a, o) { return a + o[1]; }, 0) / w.length;
+    });
+    var peak = avg.reduce(function (a, v) { return up ? Math.max(a, v) : Math.min(a, v); }, avg[0]);
+    var overshoot = up ? peak - target : target - peak;
+    var settleT = null;
+    for (var j = avg.length - 1; j >= 0; j--) { if (Math.abs(avg[j] - target) > 0.5) { settleT = j + 1 < seg.length ? seg[j + 1][0] - t0 : null; break; } }
+    if (j < 0) settleT = 0;
+    var tail = seg.filter(function (s) { return s[0] >= seg[seg.length - 1][0] - 60; });
+    var err = tail.reduce(function (a, s) { return a + s[1]; }, 0) / tail.length - target;
+    var done = t1 !== Infinity || tuneStatus.state !== 'setpoint';
+    rows += '<tr><td>' + fmt(start, 1) + ' &rarr; ' + fmt(target, 1) + ' &deg;C</td><td>' + (overshoot > 0 ? fmt(overshoot, 2) : '0') + ' &deg;C</td><td>' +
+      (settleT === null ? (done ? 'not settled' : '...') : fmt(settleT / 60, 1) + ' min') + '</td><td>' + fmt(err, 2) + ' &deg;C</td></tr>';
+  }
+  box.innerHTML = rows ? '<div class="scroll"><table><tr><th>Step</th><th>Overshoot (10 s avg)</th><th>Settling (&plusmn;0.5 &deg;C, 10 s avg)</th><th>Error, last 60 s</th></tr>' + rows + '</table></div>' : '';
+}
+
+// ---------------------------------------------------------------- plot
+function redraw() {
+  showFit();
+  showSetpointMetrics();
+  var c = $('plot'), dpr = window.devicePixelRatio || 1;
+  var w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  var g = c.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  var css = getComputedStyle(document.documentElement);
+  var col = function (n) { return css.getPropertyValue(n).trim(); };
+  var L = 48, R = 44, T = 10, B = 28, pw = w - L - R, ph = h - T - B;
+  g.font = '12px system-ui, sans-serif';
+  if (!data.length) { g.fillStyle = col('--muted'); g.fillText('No test data yet', L + 10, T + 20); return; }
+
+  var tMax = Math.max(60, data[data.length - 1][0]);
+  var lo = Infinity, hi = -Infinity, dMax = 10;
+  data.forEach(function (s) {
+    [s[1], s[2]].forEach(function (v) { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } });
+    dMax = Math.max(dMax, s[3]);
+  });
+  if (tuneStatus && tuneStatus.sp) tuneStatus.sp.list.forEach(function (v) { lo = Math.min(lo, v); hi = Math.max(hi, v); });
+  if (hi - lo < 4) { var mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+  var pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  dMax = Math.ceil(dMax / 10) * 10;
+  var X = function (t) { return L + pw * t / tMax; };
+  var Y = function (v) { return T + ph * (1 - (v - lo) / (hi - lo)); };
+  var YD = function (d) { return T + ph * (1 - d / dMax); };
+
+  // grid and axes
+  g.strokeStyle = col('--line'); g.fillStyle = col('--muted'); g.lineWidth = 1;
+  var step = niceStep((hi - lo) / 6);
+  for (var v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.stroke();
+    g.fillText(v.toFixed(step < 1 ? 1 : 0), 4, Y(v) + 4);
+  }
+  var tStep = niceStep(tMax / 60 / 8) * 60;
+  for (var t = 0; t <= tMax; t += tStep) {
+    g.beginPath(); g.moveTo(X(t), T); g.lineTo(X(t), T + ph); g.stroke();
+    g.fillText((t / 60).toFixed(tStep < 60 ? 1 : 0), X(t) - 6, h - 10);
+  }
+  for (var d = 0; d <= dMax; d += dMax / 5) g.fillText(d.toFixed(0) + '%', L + pw + 6, YD(d) + 4);
+  g.fillText('min', L + pw - 16, h - 10);
+  g.fillText('°C', L + 4, T + 12);
+
+  // markers: power step, setpoint starts and targets
+  g.strokeStyle = col('--model'); g.setLineDash([5, 4]);
+  if (tuneStatus && tuneStatus.step && tuneStatus.step.at >= 0) { g.beginPath(); g.moveTo(X(tuneStatus.step.at), T); g.lineTo(X(tuneStatus.step.at), T + ph); g.stroke(); }
+  if (tuneStatus && tuneStatus.sp) {
+    tuneStatus.sp.list.forEach(function (sv, i) {
+      var a = tuneStatus.sp.starts[i]; if (a < 0) return;
+      var b = (i + 1 < tuneStatus.sp.list.length && tuneStatus.sp.starts[i + 1] >= 0) ? tuneStatus.sp.starts[i + 1] : tMax;
+      g.beginPath(); g.moveTo(X(a), Y(sv)); g.lineTo(X(b), Y(sv)); g.stroke();
+    });
+  }
+  g.setLineDash([]);
+
+  // series
+  line(g, data, 3, X, YD, col('--duty'), [3, 3]);
+  line(g, data, 2, X, Y, col('--aux'));
+  line(g, data, 1, X, Y, col('--pid'));
+
+  // fitted model
+  if (fit) {
+    g.strokeStyle = col('--model'); g.lineWidth = 2; g.beginPath();
+    for (var k = 0; k <= 200; k++) {
+      var tt = fit.tStep + (tMax - fit.tStep) * k / 200, dt = tt - fit.tStep;
+      var yy = fit.y0 + (dt > fit.theta ? fit.D * (1 - Math.exp(-(dt - fit.theta) / fit.tau)) : 0);
+      if (k === 0) g.moveTo(X(tt), Y(yy)); else g.lineTo(X(tt), Y(yy));
+    }
+    g.stroke(); g.lineWidth = 1;
+  }
+}
+
+function line(g, rows, idx, X, Y, color, dash) {
+  g.strokeStyle = color; g.lineWidth = 2; g.setLineDash(dash || []);
+  g.beginPath(); var started = false;
+  rows.forEach(function (s) {
+    if (s[idx] === null) { started = false; return; }
+    if (!started) { g.moveTo(X(s[0]), Y(s[idx])); started = true; } else g.lineTo(X(s[0]), Y(s[idx]));
+  });
+  g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+}
+
+function niceStep(raw) {
+  var p = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-6)))), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+window.addEventListener('resize', redraw);
+poll();
+</script>
+</body>
+</html>

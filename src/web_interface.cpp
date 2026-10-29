@@ -4,6 +4,7 @@
 #include "heater_controller.h"
 #include "data_manager.h"
 #include "safety_system.h"
+#include "tuning.h"
 
 // Statistics for debugging
 unsigned long totalWebSocketMessages = 0;
@@ -38,6 +39,9 @@ void setupWebServer() {
   
   // System control routes
   server.on("/system/reset", handleSystemReset);
+
+  // PID tuning page and tests
+  setupTuningRoutes();
 
   Serial.println("OK");
   server.begin();
@@ -380,6 +384,7 @@ void handleAveraging() {
 
 void handleRelayOn() {
   Serial.println("HTTP: Heater ON requested (manual 100% PWM)");
+  stopTuning("heater turned on from the main page");
   heaterEnabled = true;
   pidEnabled = false;  // Disable PID for manual control
   setHeaterPower(100.0);  // Set to 100% PWM
@@ -388,6 +393,7 @@ void handleRelayOn() {
 
 void handleRelayOff() {
   Serial.println("HTTP: Heater OFF requested");
+  stopTuning("heater turned off from the main page");
   heaterEnabled = false;
   pidEnabled = false;
   setHeaterPower(0.0);  // Set to 0% PWM
@@ -396,6 +402,7 @@ void handleRelayOff() {
 
 void handleSetTemperature() {
   if (server.hasArg("temp")) {
+    stopTuning("setpoint changed from the main page");
     float newTemp = server.arg("temp").toFloat();
     if (newTemp >= 0 && newTemp <= MAX_SAFE_TEMPERATURE) {
       targetTemperature = newTemp;
@@ -413,10 +420,10 @@ void handleSetTemperature() {
 
 void handlePIDEnable() {
   Serial.println("HTTP: PID control ENABLED");
+  stopTuning("PID enabled from the main page");
   pidEnabled = true;
   heaterEnabled = true;
-  pidIntegral = 0;
-  pidLastError = 0;
+  resetPIDState();
   lastPIDUpdate = millis() - PID_INTERVAL; // Force immediate PID update
   Serial.println("PID: Taking control of heater PWM");
   server.send(200, "text/plain", "PID control enabled - taking over heater control");
@@ -424,6 +431,7 @@ void handlePIDEnable() {
 
 void handlePIDDisable() {
   Serial.println("HTTP: PID control DISABLED");
+  stopTuning("PID disabled from the main page");
   pidEnabled = false;
   server.send(200, "text/plain", "PID control disabled");
 }
@@ -433,6 +441,7 @@ void handlePIDParams() {
   // The kp/ki/kd columns are written from the current gains when the buffer is
   // saved, so save the rows sampled under the old gains before changing them.
   if (server.hasArg("kp") || server.hasArg("ki") || server.hasArg("kd")) {
+    stopTuning("PID gains changed");
     flushDataBuffer();
     if (bufferIndex > 0 || bufferFull) {
       Serial.println(F("WARNING: Buffer flush failed - unsaved rows will be logged with the new PID gains"));
@@ -448,8 +457,7 @@ void handlePIDParams() {
     Serial.print(pidKi);
     Serial.print(", Kd=");
     Serial.println(pidKd);
-    pidIntegral = 0;
-    pidLastError = 0;
+    resetPIDState();
     server.send(200, "text/plain", "PID parameters updated");
   } else {
     server.send(400, "text/plain", "No parameters provided");
@@ -520,6 +528,7 @@ void handleDeleteLog() {
 
 void handleSystemReset() {
   Serial.println("HTTP: System reset requested");
+  stopTuning("system reset");
   
   // Safety check - verify temperature is reasonable before allowing reset
   selectMuxChannel(THERMISTOR_CHANNEL);
@@ -568,9 +577,7 @@ void handleSystemReset() {
   setHeaterPower(0.0);
   
   // Reset PID state
-  pidIntegral = 0;
-  pidLastError = 0;
-  pidError = 0;
+  resetPIDState();
   pidOutput = 0;
   
   // Reset safety system state

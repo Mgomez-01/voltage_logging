@@ -21,13 +21,20 @@ const int PWM_RANGE = 1000;   // 0-1000 range for 0.1% resolution
 // PID Controller variables
 float targetTemperature = 45.0; // Default target temperature
 bool pidEnabled = false;
-float pidKp = 2.2;  // Proportional gain
-float pidKi = 0.25;  // Integral gain
-float pidKd = 0.15;  // Derivative gain - these values have been tested and work well at 50°C. 
+// Default gains: interim values from a model of the sheet fitted to the
+// 2026-10-26 run (about 2 °C per % power, 60 s time constant, 3 s delay),
+// chosen for no overshoot. Run the /tune page to measure the real fixture.
+// Gains saved from /tune (/pid/save) are loaded from LittleFS at boot and
+// replace these. (Before the anti-windup fix the gains were 2.2 / 0.25 / 0.15;
+// with the old integral cap they overshoot ~10 °C now.)
+float pidKp = 2.3;    // Proportional gain (% per °C)
+float pidKi = 0.045;  // Integral gain (% per °C·s)
+float pidKd = 0.0;    // Derivative gain (% per °C/s)
 float pidOutput = 0.0;
 float pidError = 0.0;
 float pidLastError = 0.0;
 float pidIntegral = 0.0;
+float pidLastInput = NAN;  // Last measured temperature (derivative on measurement); NAN = none yet
 const unsigned long PID_INTERVAL = 500; // PID update interval in ms
 unsigned long lastPIDUpdate = 0;
 
@@ -135,6 +142,15 @@ void checkHeaterSafety() {
   }
 }
 
+// Clear the PID's memory (integral, last error/temperature). Call whenever the
+// PID is (re)enabled or its gains change.
+void resetPIDState() {
+  pidIntegral = 0;
+  pidLastError = 0;
+  pidLastInput = NAN;
+  pidError = 0;
+}
+
 void updatePIDController() {
   if (!pidEnabled) return;
   
@@ -199,20 +215,40 @@ void updatePIDController() {
   #endif
   
   pidError = targetTemperature - currentTemp;
+  const float dt = PID_INTERVAL / 1000.0;
   
-  // Calculate PID terms
+  // Proportional term
   float proportional = pidKp * pidError;
   
-  // Update integral with anti-windup
-  pidIntegral += pidError * (PID_INTERVAL / 1000.0);
-  // Anti-windup: limit integral to prevent excessive buildup
-  if (pidIntegral > 100) pidIntegral = 100;
-  if (pidIntegral < -100) pidIntegral = -100;
-  float integral = pidKi * pidIntegral;
-  
-  // Calculate derivative
-  float derivative = pidKd * (pidError - pidLastError) / (PID_INTERVAL / 1000.0);
+  // Derivative on measurement: -Kd * dT/dt. Same as Kd * d(error)/dt while the
+  // setpoint is constant, but a setpoint step doesn't cause an output spike.
+  float derivative = 0;
+  if (!isnan(pidLastInput)) {
+    derivative = -pidKd * (currentTemp - pidLastInput) / dt;
+  }
+  pidLastInput = currentTemp;
   pidLastError = pidError;
+  
+  // Integral with anti-windup:
+  //  1. Conditional integration: don't integrate further while the output is
+  //     already saturated in the direction the error is pushing.
+  //  2. Clamp the integral term itself to the output range (0-100 %), so it can
+  //     supply whatever steady power a setpoint needs. (The old +/-100 clamp on
+  //     the raw integral capped it at 25 % output with Ki = 0.25, which left the
+  //     sheet several degrees short of high setpoints.)
+  float candidate = pidIntegral + pidError * dt;
+  float unsaturated = proportional + pidKi * candidate + derivative;
+  bool saturatedHigh = unsaturated > 100 && pidError > 0;
+  bool saturatedLow = unsaturated < 0 && pidError < 0;
+  if (!saturatedHigh && !saturatedLow) {
+    pidIntegral = candidate;
+  }
+  if (pidKi > 0) {
+    float maxIntegral = 100.0 / pidKi;
+    if (pidIntegral > maxIntegral) pidIntegral = maxIntegral;
+    if (pidIntegral < -maxIntegral) pidIntegral = -maxIntegral;
+  }
+  float integral = pidKi * pidIntegral;
   
   // Compute PID output (0-100%)
   pidOutput = proportional + integral + derivative;

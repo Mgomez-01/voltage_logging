@@ -227,9 +227,11 @@ Setpoint / limits:
   Reset allowed below ......... 120 C (MAX_SAFE_TEMPERATURE - 10) and only
                                 with a valid sensor reading
 
-PID gains (defaults; comment in code: "tested and work well at 50 C"):
-  Kp = 2.2      Ki = 0.25      Kd = 0.15
+PID gains (interim defaults from a model of the sheet, until tuned on /tune):
+  Kp = 2.3      Ki = 0.045     Kd = 0
   Changeable at runtime: GET /pid/params?kp=&ki=&kd=  (resets the integral)
+  Saved from the /tune page to /pid.json on the board's flash, loaded at boot.
+  (Before 2026-10-29: 2.2 / 0.25 / 0.15 with a 25 % integral cap.)
 
 Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
   temp       = latest buffered PID Temp Sensor reading, or a direct read of
@@ -238,9 +240,10 @@ Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
   skip update if temp is invalid (< -50, > 200, NaN)
   error      = target - temp
   P          = Kp * error
-  integral  += error * 0.5,   clamped to [-100, +100]
-  I          = Ki * integral                     (max +/-25 % of output)
-  D          = Kd * (error - last_error) / 0.5
+  integral  += error * 0.5, unless the output is already saturated in the
+               direction the error pushes (anti-windup)
+  I          = Ki * integral, limited to +/-100 % of output
+  D          = -Kd * (temp - last_temp) / 0.5    (on the measurement)
   output     = P + I + D, clamped to 0..100 %
   heater PWM duty = output   (continuous, no on/off threshold)
 
@@ -249,10 +252,21 @@ How it behaves (for slides):
     switching a relay on/off, so the temperature is smoother.
   - The P term alone reaches 100 % when the error is above ~45 C, so a cold
     start heats at full power and then tapers off near the target.
-  - The integral can contribute at most 25 %. If holding the target needs
-    more than ~25 % power, the temperature settles slightly below the target
-    by about (needed % - 25) / 2.2 degrees.
-  - D acts on the error, so changing the setpoint causes a one-step kick.
+  - The integral can supply the full output range, so the sheet reaches the
+    setpoint at any power. (Before the fix it was capped at 25 %, and above
+    ~60 C the sheet settled (needed % - 25) / 2.2 degrees short, e.g. 88 C
+    for a 92 C setpoint.)
+  - D acts on the measured temperature, so a setpoint change causes no kick.
+
+PID tuning page (/tune, firmware src/tuning.cpp):
+  1. Power step test, PID off: hold power 1 until the sheet settles, step to
+     power 2, record until settled, heater off.
+  2. The page fits delay, time constant and gain (C per % power) and
+     suggests PI gains (Skogestad SIMC): fast / critically damped / smooth.
+  3. Setpoint test, PID on: up to 4 setpoints, overshoot and settling time
+     per step. Apply, or save as boot defaults (/pid.json).
+  Safety: heater off above 120 C, on sensor fault, emergency shutdown,
+  after 25 min, or if the heater/PID is changed from the main page.
   - The PID runs whether or not logging is on.
 
 Manual control: /relay/on = 100 % PWM (disables PID); /relay/off = 0 %.
@@ -418,7 +432,8 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    differed by a steady 1.87 +/- 0.24 C); after correction both match
    the hotplate to 0.35 C RMS. Absolute: about +/-1.5 C, limited by the
    hotplate as a reference (a multimeter check in water at 45 C pointed
-   2-4 C higher). Still to do: retune the PID gains. The calibrated PID reading is ~2.0 C lower than the original
+   2-4 C higher). PID anti-windup fixed and a /tune page added
+   (2026-10-29); still to do: run it on the full fixture. The calibrated PID reading is ~2.0 C lower than the original
    firmware at 45 C, so the same setpoint now holds the part ~2.0 C hotter.
 6. If the SD card isn't ready at boot, no log file is created. Insert the
    card and press Start Logging (it retries), or reboot.

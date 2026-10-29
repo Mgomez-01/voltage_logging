@@ -13,6 +13,7 @@
 #include "data_manager.h"
 #include "web_interface.h"
 #include "safety_system.h"
+#include "tuning.h"
 
 // Fallback definition for A0 if not defined (for IDE/linter support)
 #ifndef A0
@@ -93,6 +94,9 @@ void setup() {
   }
   Serial.println("OK");
 
+  // PID gains saved from the /tune page, if any
+  loadSavedPidGains();
+
   // Setup WiFi Access Point
   initializeWiFi();
 
@@ -142,6 +146,7 @@ void loop() {
   feedWatchdog(); // Feed at the start of every loop
 
   if (emergencyShutdown) {
+    stopTuning("emergency shutdown");  // No-op unless a tuning test is running
     emergencyShutdownSystem();
     return;
   }
@@ -160,6 +165,9 @@ void loop() {
   webSocket.loop();
   checkSafetyTimeout(); // General safety system monitoring
   
+  // PID tuning tests (/tune page): sample and advance, if one is running
+  tuningLoop();
+
   // PID control runs independently of data logging
   if (pidEnabled && millis() - lastPIDUpdate >= PID_INTERVAL) {
     updatePIDController();

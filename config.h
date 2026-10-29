@@ -121,8 +121,9 @@
 //   (Start Logging) retries the SD setup and refuses with HTTP 503 if it
 //   still fails. /data.csv with no ?file= downloads the current log file.
 //
-// Internal flash (LittleFS) holds ONLY the web page template
-// (data/index.template.html, uploaded with `pio run -t uploadfs`).
+// Internal flash (LittleFS) holds the web pages (data/index.template.html,
+// data/tune.html, uploaded with `pio run -t uploadfs`) and the PID gains saved
+// from /tune (/pid.json, erased by uploadfs).
 // No sensor data is stored in internal flash.
 
 // =============================================================================
@@ -136,11 +137,19 @@
 //   PWM_RANGE            = 1000 (0.1% resolution)
 //
 //   targetTemperature    = 45.0 C default (settable 0 - MAX_SAFE_TEMPERATURE)
-//   pidKp                = 2.2
-//   pidKi                = 0.25
-//   pidKd                = 0.15
+//   pidKp                = 2.3    interim defaults from a model of the sheet;
+//   pidKi                = 0.045  gains saved from the /tune page (/pid.json
+//   pidKd                = 0.0    on LittleFS) replace them at boot
 //   PID_INTERVAL         = 500 ms
-//   Integral clamp       = +/-100 (+/-25% output with Ki = 0.25)
+//   Anti-windup          = integral term limited to +/-100 % output and not
+//                          integrated while the output is saturated
+//   Derivative           = on the measurement (-Kd dT/dt), no setpoint kick
+//
+//   PID tuning (src/tuning.cpp, /tune page)
+//   TUNE_MAX_SAMPLES     = 600 x 8 bytes, 1 s (halves resolution when full)
+//   TUNE_MAX_TEMP        = 120 C   test stops (heater off) above this
+//   TUNE_MAX_TOTAL_MS    = 25 min  test stops after this
+//   Step test settling   = >= 2 min and |trend| < 0.15 C/min over 60 s
 //   Output               = 0-100% -> PWM duty
 //
 //   MAX_SAFE_TEMPERATURE = 130.0 C        Over-temp emergency shutdown
