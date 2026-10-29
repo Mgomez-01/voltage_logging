@@ -69,16 +69,25 @@ void sendWebUpdate() {
       static float lastSentAuxTemp = -999;
       static float lastSentVoltage = -999;
       static bool lastSentHeaterState = false;
+      static float lastSentDuty = -1;
+      static float lastSentTarget = -999;
+      static bool lastSentPidEnabled = false;
+      static unsigned long lastSentMs = 0;
       float currentTemp = readings[idx].temperature;
       float currentAuxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
       float currentVoltage = readings[idx].voltage;
       bool currentHeaterState = readings[idx].heaterState;
 
-      // Only send if changed significantly or heater state changed
+      // Only send if something changed noticeably (temperatures, voltage, heater
+      // power, setpoint, PID on/off), or every 5 s so the live plot keeps moving
       if (abs(currentTemp - lastSentTemp) < 0.1 &&
           abs(currentAuxTemp - lastSentAuxTemp) < 0.1 &&
           abs(currentVoltage - lastSentVoltage) < 0.01 &&
-          currentHeaterState == lastSentHeaterState) {
+          currentHeaterState == lastSentHeaterState &&
+          abs(readings[idx].pidValue - lastSentDuty) < 1.0 &&
+          readings[idx].targetTemp == lastSentTarget &&
+          readings[idx].pidEnabled == lastSentPidEnabled &&
+          millis() - lastSentMs < 5000) {
         return;  // Skip this update - no significant change
       }
 
@@ -86,6 +95,10 @@ void sendWebUpdate() {
       lastSentAuxTemp = currentAuxTemp;
       lastSentVoltage = currentVoltage;
       lastSentHeaterState = currentHeaterState;
+      lastSentDuty = readings[idx].pidValue;
+      lastSentTarget = readings[idx].targetTemp;
+      lastSentPidEnabled = readings[idx].pidEnabled;
+      lastSentMs = millis();
       
       // Use static document to avoid heap fragmentation
       static StaticJsonDocument<256> doc;
@@ -98,7 +111,8 @@ void sendWebUpdate() {
       doc["type"] = "reading";
       doc["heaterState"] = readings[idx].heaterState;
       doc["targetTemp"] = readings[idx].targetTemp;
-      doc["pidOutput"] = readings[idx].pidValue;
+      doc["pidOutput"] = readings[idx].pidValue;           // Heater PWM duty when sampled
+      doc["pidEnabled"] = readings[idx].pidEnabled;
       doc["loggingEnabled"] = dataLoggingEnabled;
       
       char jsonBuffer[256];

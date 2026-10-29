@@ -3,7 +3,6 @@
 <head>
     <title>ESP8266 Voltage + Temperature Logger with Heater Control</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -19,7 +18,13 @@
         .status { text-align: center; margin-bottom: 20px; padding: 10px; border-radius: 4px; }
         .status.connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .status.disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .chart-container { width: 100%; height: 400px; margin-bottom: 30px; }
+        .chart-container { width: 100%; margin-bottom: 30px; }
+        .plot-controls { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 14px; color: #444; margin-bottom: 8px; }
+        .plot-controls select { padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+        #sensorPlot { width: 100%; height: 380px; display: block; }
+        .plot-legend { font-size: 13px; color: #666; display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+        .plot-legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 5px; vertical-align: middle; background: currentColor; }
+        @media (max-width: 600px) { #sensorPlot { height: 280px; } body { margin: 8px; } .container { padding: 12px; } }
         .log-container { height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; background-color: #f9f9f9; font-family: monospace; font-size: 12px; }
         .current-readings { text-align: center; margin-bottom: 20px; }
         .reading { display: inline-block; margin: 0 20px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; border: 2px solid #dee2e6; }
@@ -193,12 +198,46 @@ function resetSystem() {
             </table>
         </div>
 
-        <div class="chart-container"><canvas id="sensorChart"></canvas></div>
+        <div class="chart-container">
+            <div class="plot-controls">
+                <label>Window
+                    <select id="plotWindow" onchange="redrawPlot()">
+                        <option value="120">2 min</option>
+                        <option value="300">5 min</option>
+                        <option value="900" selected>15 min</option>
+                        <option value="3600">60 min</option>
+                        <option value="0">All</option>
+                    </select>
+                </label>
+                <label>Right axis
+                    <select id="plotRight" onchange="redrawPlot()">
+                        <option value="duty" selected>Heater power (%)</option>
+                        <option value="volt">Voltage, channel 0 (V)</option>
+                        <option value="none">None</option>
+                    </select>
+                </label>
+                <label><input type="checkbox" id="showPid" checked onchange="redrawPlot()"> PID Temp Sensor</label>
+                <label><input type="checkbox" id="showAux" checked onchange="redrawPlot()"> AUX Temp Sensor</label>
+                <label><input type="checkbox" id="showTarget" checked onchange="redrawPlot()"> Setpoint</label>
+                <button class="btn" style="padding:4px 10px;" onclick="downloadPlotCsv()">Download plotted data (CSV)</button>
+            </div>
+            <canvas id="sensorPlot"></canvas>
+            <div class="plot-legend">
+                <span style="color:#c0392b">PID Temp Sensor (sheet)</span>
+                <span style="color:#e67e22">AUX Temp Sensor (sample)</span>
+                <span style="color:#1e8449">Setpoint (while PID is on)</span>
+                <span style="color:#2471a3">Right axis</span>
+            </div>
+        </div>
         <div class="log-container" id="logContainer"><div>Sensor readings will appear here...</div></div>
     </div>
 
     <script>
-        let ws, chart, startTime = Date.now();
+        let ws, startTime = Date.now();
+        // Live plot data: { t: device time (s), pid, aux, target, duty, volt, pidOn }
+        let plotData = [];
+        const PLOT_MAX_POINTS = 8000;
+        let plotRedrawPending = false;
         // **FIX:** Changed 'loggingEnabled' to 'displayLoggingEnabled' to avoid confusion
         // It now *only* controls if we *show* logs/chart updates, not *backend* logging.
         let displayLoggingEnabled = true;
@@ -228,42 +267,138 @@ function resetSystem() {
             updateDetailedDebug(msg);
         }
 
-        function initChart() {
-            logDebug('Checking if Chart.js is available...');
-            if (typeof Chart === 'undefined') {
-                logDebug('Chart.js not loaded - chart will be disabled');
-                document.getElementById('chartStatus').textContent = 'Disabled (no internet)';
-                document.getElementById('chartStatus').style.color = 'orange';
-                document.getElementById('sensorChart').style.display = 'none';
-                const chartContainer = document.querySelector('.chart-container');
-                if (chartContainer) chartContainer.innerHTML = '<div style="text-align:center;padding:20px;background:#f0f0f0;border-radius:4px;color:#666;"><strong>Real-time Chart Unavailable</strong><br>Chart.js requires internet connection<br>Sensor readings still work below</div>';
+        // Built-in plot (canvas, no external library), so it works when the laptop
+        // is connected only to the board's Wi-Fi.
+        function initPlot() {
+            document.getElementById('chartStatus').textContent = 'Active (built-in plot)';
+            document.getElementById('chartStatus').style.color = 'green';
+            window.addEventListener('resize', redrawPlot);
+            redrawPlot();
+        }
+
+        function addPlotPoint(timestamp, voltage, temperature, auxTemperature, data) {
+            const t = timestamp / 1000;
+            // A smaller device time means the board rebooted: start over
+            if (plotData.length && t < plotData[plotData.length - 1].t - 1) plotData = [];
+            // Heater power: /status sends heaterDutyCycle; WebSocket messages send the
+            // logged duty as pidOutput
+            const duty = !data ? null : (data.heaterDutyCycle !== undefined ? data.heaterDutyCycle
+                                         : (data.pidOutput !== undefined ? data.pidOutput : null));
+            plotData.push({
+                t: t,
+                pid: (temperature > -50 && temperature < 150) ? temperature : null,
+                aux: auxTemperature,
+                target: data && data.targetTemp !== undefined ? data.targetTemp : null,
+                pidOn: data ? !!data.pidEnabled : false,
+                duty: duty,
+                volt: voltage
+            });
+            if (plotData.length > PLOT_MAX_POINTS) plotData.splice(0, plotData.length - PLOT_MAX_POINTS);
+            if (!plotRedrawPending) {
+                plotRedrawPending = true;
+                requestAnimationFrame(function () { plotRedrawPending = false; redrawPlot(); });
+            }
+        }
+
+        function niceStep(raw) {
+            const p = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-9)))), m = raw / p;
+            return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+        }
+
+        function redrawPlot() {
+            const c = document.getElementById('sensorPlot');
+            if (!c) return;
+            const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+            c.width = w * dpr; c.height = h * dpr;
+            const g = c.getContext('2d');
+            g.setTransform(dpr, 0, 0, dpr, 0, 0);
+            g.clearRect(0, 0, w, h);
+            g.font = '12px Arial, sans-serif';
+            const right = document.getElementById('plotRight').value;
+            const showPid = document.getElementById('showPid').checked;
+            const showAux = document.getElementById('showAux').checked;
+            const showTarget = document.getElementById('showTarget').checked;
+            const L = 48, R = right === 'none' ? 12 : 52, T = 10, B = 28, pw = w - L - R, ph = h - T - B;
+            if (!plotData.length) {
+                g.fillStyle = '#888';
+                g.fillText(serverLoggingState ? 'Waiting for readings...' : 'Start logging to plot readings', L + 10, T + 24);
                 return;
             }
-            logDebug('Chart.js loaded successfully, initializing sensor chart...');
-            try {
-                const ctx = document.getElementById('sensorChart').getContext('2d');
-                chart = new Chart(ctx, {
-                    type: 'line',
-                    data: { labels: [], datasets: [
-                        { label: 'Voltage (V)', data: [], borderColor: '#2196F3', backgroundColor: 'rgba(33, 150, 243, 0.1)', borderWidth: 2, fill: false, yAxisID: 'voltage' },
-                        { label: 'PID Temp Sensor (°C)', data: [], borderColor: '#FF6384', backgroundColor: 'rgba(255, 99, 132, 0.1)', borderWidth: 2, fill: false, yAxisID: 'temperature' },
-                        { label: 'AUX Temp Sensor (°C)', data: [], borderColor: '#FF9800', backgroundColor: 'rgba(255, 152, 0, 0.1)', borderWidth: 2, borderDash: [6, 3], fill: false, spanGaps: false, yAxisID: 'temperature' }
-                    ] },
-                    options: { responsive: true, maintainAspectRatio: false, scales: {
-                        x: { type: 'linear', position: 'bottom', title: { display: true, text: 'Time (ms)' } },
-                        voltage: { type: 'linear', position: 'left', title: { display: true, text: 'Voltage (V)' }, min: 0, max: 1 },
-                        temperature: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (°C)' } }
-                    }, plugins: { legend: { display: true } }, animation: { duration: 0 } }
-                });
-                document.getElementById('chartStatus').textContent = 'Active (Voltage + PID/AUX Temp)';
-                document.getElementById('chartStatus').style.color = 'green';
-                logDebug('Sensor chart initialized successfully');
-            } catch(e) {
-                logDebug('Error initializing chart: ' + e.message);
-                document.getElementById('chartStatus').textContent = 'Error: ' + e.message;
-                document.getElementById('chartStatus').style.color = 'red';
-                chart = null;
+
+            const tEnd = plotData[plotData.length - 1].t;
+            const win = parseFloat(document.getElementById('plotWindow').value);
+            const tStart = win > 0 ? tEnd - win : plotData[0].t;
+            const span = Math.max(10, tEnd - tStart);
+            const pts = plotData.filter(p => p.t >= tStart);
+
+            // Temperature range from the visible series
+            let lo = Infinity, hi = -Infinity;
+            pts.forEach(p => {
+                if (showPid && p.pid !== null) { lo = Math.min(lo, p.pid); hi = Math.max(hi, p.pid); }
+                if (showAux && p.aux !== null) { lo = Math.min(lo, p.aux); hi = Math.max(hi, p.aux); }
+                if (showTarget && p.pidOn && p.target !== null) { lo = Math.min(lo, p.target); hi = Math.max(hi, p.target); }
+            });
+            if (!isFinite(lo)) { lo = 20; hi = 30; }
+            if (hi - lo < 4) { const mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+            const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+
+            // Right axis range
+            let rMax = 1, rUnit = '';
+            if (right === 'duty') { rMax = Math.max(10, Math.ceil(Math.max(...pts.map(p => p.duty || 0)) / 10) * 10); rUnit = '%'; }
+            if (right === 'volt') { rMax = Math.max(0.05, niceStep(Math.max(...pts.map(p => p.volt || 0)) * 1.2)); rUnit = 'V'; }
+
+            const X = t => L + pw * (t - (tEnd - span)) / span;
+            const Y = v => T + ph * (1 - (v - lo) / (hi - lo));
+            const YR = v => T + ph * (1 - v / rMax);
+
+            // Grid and labels
+            g.strokeStyle = '#e3e6ea'; g.fillStyle = '#666'; g.lineWidth = 1;
+            const step = niceStep((hi - lo) / 6);
+            for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+                g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.stroke();
+                g.fillText(v.toFixed(step < 1 ? 1 : 0), 4, Y(v) + 4);
             }
+            // Round time steps: 5 s ... 2 h
+            const tStep = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200].find(s => s >= span / 7) || 7200;
+            for (let k = 0; k * tStep <= span + 1e-6; k++) {
+                const t = tEnd - k * tStep;
+                g.beginPath(); g.moveTo(X(t), T); g.lineTo(X(t), T + ph); g.stroke();
+                const label = tStep >= 60 ? (-k * tStep / 60) + ' min' : (-k * tStep) + ' s';
+                g.fillText(k === 0 ? 'now' : label, X(t) - 14, h - 10);
+            }
+            if (right !== 'none') {
+                for (let i = 0; i <= 5; i++) {
+                    const v = rMax * i / 5;
+                    g.fillText((rUnit === 'V' ? v.toFixed(rMax < 0.5 ? 3 : 2) : v.toFixed(0)) + rUnit, L + pw + 6, YR(v) + 4);
+                }
+            }
+            g.fillText('\u00b0C', L + 4, T + 12);
+
+            // Series
+            const line = (key, Yf, color, dash, cond) => {
+                g.strokeStyle = color; g.lineWidth = 2; g.setLineDash(dash || []);
+                g.beginPath(); let started = false;
+                pts.forEach(p => {
+                    const v = p[key];
+                    if (v === null || v === undefined || (cond && !cond(p))) { started = false; return; }
+                    if (!started) { g.moveTo(X(p.t), Yf(v)); started = true; } else g.lineTo(X(p.t), Yf(v));
+                });
+                g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+            };
+            if (right === 'duty') line('duty', YR, '#2471a3', [3, 3]);
+            if (right === 'volt') line('volt', YR, '#2471a3', [3, 3]);
+            if (showTarget) line('target', Y, '#1e8449', [6, 4], p => p.pidOn);
+            if (showAux) line('aux', Y, '#e67e22');
+            if (showPid) line('pid', Y, '#c0392b');
+        }
+
+        function downloadPlotCsv() {
+            const rows = ['device_time_s,pid_temp_c,aux_temp_c,setpoint_c,pid_enabled,heater_power_pct,voltage_v'];
+            plotData.forEach(p => rows.push([p.t.toFixed(3), p.pid ?? '', p.aux ?? '', p.target ?? '', p.pidOn ? 1 : 0, p.duty ?? '', p.volt ?? ''].join(',')));
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
+            a.download = 'live_plot.csv';
+            a.click();
         }
 
         function initWebSocket() {
@@ -463,19 +598,7 @@ function resetSystem() {
                 ['minAuxTemperature', 'maxAuxTemperature', 'avgAuxTemperature'].forEach(id => document.getElementById(id).textContent = 'N/A');
             }
 
-            if (chart && typeof chart.update === 'function') {
-                if (chart.data.labels.length > 500) {
-                    chart.data.labels.shift();
-                    chart.data.datasets[0].data.shift();
-                    chart.data.datasets[1].data.shift();
-                    chart.data.datasets[2].data.shift();
-                }
-                chart.data.labels.push(timestamp);
-                chart.data.datasets[0].data.push(voltage);
-                chart.data.datasets[1].data.push(temperature);
-                chart.data.datasets[2].data.push(auxTemperature);  // null leaves a gap
-                chart.update('none');
-            }
+            addPlotPoint(timestamp, voltage, temperature, auxTemperature, data);
 
             const logContainer = document.getElementById('logContainer');
             const logEntry = document.createElement('div');
@@ -493,9 +616,8 @@ function resetSystem() {
         function clearData() {
             if (confirm('Are you sure you want to clear all sensor data?')) {
                 fetch('/clear').then(function() {
-                    if (chart && typeof chart.update === 'function') {
-                        chart.data.labels = []; chart.data.datasets.forEach(ds => ds.data = []); chart.update();
-                    }
+                    plotData = [];
+                    redrawPlot();
                     voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
                     tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
                     auxTempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
@@ -765,7 +887,7 @@ function resetSystem() {
                     updateDetailedDebug('Check ESP8266 connection and try refreshing the page');
                 });
 
-            try { initChart(); } catch(e) { logDebug('Chart initialization failed: ' + e.message); }
+            try { initPlot(); } catch(e) { logDebug('Plot initialization failed: ' + e.message); }
             logDebug('Starting WebSocket connection process...');
             setTimeout(initWebSocket, 1000);
             setInterval(() => {

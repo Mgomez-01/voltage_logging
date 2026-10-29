@@ -9,7 +9,8 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 - **Log file manager**: list, download and delete log files from the web page
 - **PWM heater control**: AOD4144 N-channel MOSFET driven at 0-100% duty from GPIO16
 - **PID temperature control**: runs every 500 ms, independent of data logging
-- **Real-time web interface**: WebSocket updates, live charts and statistics
+- **Real-time web interface**: WebSocket updates, a live plot and statistics. The plot is drawn by the page itself (no internet needed): PID and AUX temperatures, the setpoint while the PID is on, and heater power or voltage on the right axis, over a 2 min to 60 min window, downloadable as CSV
+- **PID tuning page** (`/tune`): power step and setpoint tests with suggested gains (see Heater / PID)
 - **WiFi access point**: no router needed
 - **Safety system**: over-temperature, sensor-fault and max-runtime shutdown, software and hardware watchdogs, SD write timeouts, low-memory guard, and a web "System Reset" to recover
 
@@ -268,7 +269,9 @@ Endpoints: `/tune/step?p1=&p2=&max=`, `/tune/setpoint?sp=80,90,95&hold=&kp=&ki=&
 ### Network / API
 | Route | Action |
 |---|---|
-| `/` | Web page |
+| `/` | Main web page |
+| `/tune` | PID tuning page; tests via `/tune/step`, `/tune/setpoint`, `/tune/stop`, `/tune/status`, `/tune/data`; `/pid/save` stores the gains |
+| `/averaging?enabled=&n=` | Averaging on/off and cycles per row |
 | `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
 | `/status` | One-shot JSON reading and settings: `temperature` (PID Temp Sensor), `auxTemperature` (AUX Temp Sensor), raw ADC counts and divider voltages |
 | `/logs` | JSON list of log files `{name, size}` |
@@ -294,11 +297,13 @@ src/
 ├── data_manager.*         # RAM buffer, SD card, log files, rotation, write timeouts
 ├── heater_controller.*    # PWM output, PID, heater safety checks
 ├── safety_system.*        # Ticker safety check, watchdog, emergency shutdown
+├── tuning.*               # PID tuning tests (power step, setpoint), saved gains
 ├── web_interface.*        # HTTP routes, WebSocket, page templating
 ├── wifi_manager.*         # access point
 └── debug_config.h         # centralized debug macros (not used yet, see md_info_docs/DEBUG_MIGRATION_GUIDE.md)
 data/
-└── index.template.html    # web page (uploaded to LittleFS)
+├── index.template.html    # main web page (uploaded to LittleFS)
+└── tune.html              # PID tuning page (uploaded to LittleFS)
 config.h                   # reference of key settings (not compiled in)
 ```
 
