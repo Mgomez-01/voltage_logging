@@ -134,7 +134,7 @@ void setup() {
   Serial.println("   PWM pin: GPIO16 (D0) - 32 Hz");
   Serial.println("   MOSFET: AOD4144 N-channel");
   Serial.println("   PID control with smooth 0-100% power regulation");
-  Serial.println("   Safety timeout: 30 minutes continuous operation");
+  Serial.println("   Safety timeout: 1hr continuous operation");
   Serial.println("     HARDWARE SAFETY SYSTEM ACTIVE");
   Serial.println("     Independent timer-based monitoring");
   Serial.println("     Watchdog protection enabled");

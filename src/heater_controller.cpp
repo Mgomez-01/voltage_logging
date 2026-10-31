@@ -7,7 +7,7 @@ const int HEATER_PWM_PIN = 16; // GPIO16 (D0) for PWM control of MOSFET
 bool heaterEnabled = false;
 float heaterDutyCycle = 0.0; // Current PWM duty cycle (0-100%)
 unsigned long heaterStartTime = 0; // Time when heater was enabled
-const unsigned long MAX_HEATER_TIME = 1800000; // 30 min safety timeout
+const unsigned long MAX_HEATER_TIME = 2*1800000; // 1hr safety timeout
 const float MAX_SAFE_TEMPERATURE = 130.0; // Maximum safe temperature in °C
 
 // PWM configuration
@@ -125,7 +125,7 @@ void checkHeaterSafety() {
       emergencyShutdown = true;
     }
     
-    // Check for maximum runtime (MAX_HEATER_TIME = 30 minutes continuous heating)
+    // Check for maximum runtime (MAX_HEATER_TIME = 1hr continuous heating)
     if (heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
       Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
       emergencyShutdown = true;
