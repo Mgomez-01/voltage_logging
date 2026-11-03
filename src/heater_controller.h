@@ -9,7 +9,7 @@ extern const int HEATER_PWM_PIN; // GPIO16 (D0) for PWM control of MOSFET
 extern bool heaterEnabled;
 extern float heaterDutyCycle; // Current PWM duty cycle (0-100%)
 extern unsigned long heaterStartTime; // Time when heater was enabled
-extern const unsigned long MAX_HEATER_TIME; // 30 min continuous-heating limit
+extern const unsigned long MAX_HEATER_TIME; // 1 h continuous-heating limit
 extern const float MAX_SAFE_TEMPERATURE; // Maximum safe temperature in °C
 
 // PWM configuration
@@ -30,8 +30,25 @@ extern float pidLastInput;  // Last measured temperature, for derivative on meas
 extern const unsigned long PID_INTERVAL; // PID update interval in ms
 extern unsigned long lastPIDUpdate;
 
+// Which sensor the PID controls (selectable from the web page)
+enum ControlSensor : uint8_t {
+  CONTROL_PID_SENSOR = 0,  // PID Temp Sensor, channel 1 (sheet, next to the heater)
+  CONTROL_AUX_SENSOR = 1   // AUX Temp Sensor, channel 2 (sample)
+};
+extern ControlSensor controlSensor;
+extern float sensorGains[2][3];       // [sensor][Kp, Ki, Kd]; the active sensor's are pidKp/Ki/Kd
+extern float sheetLimit;              // Sheet cap (°C) while controlling on AUX
+extern const float SHEET_LIMIT_BAND;  // Power tapers to 0 over this many °C below sheetLimit
+extern const float MIN_SHEET_LIMIT;
+extern const float MAX_SHEET_LIMIT;
+extern bool sheetLimited;             // PID output currently held back by the sheet limit
+extern char pidFaultMessage[64];      // Why the PID stopped itself; empty if it didn't
+
 // Function declarations
 void initializeHeaterPWM();
+void setControlSensor(ControlSensor sensor);  // Swaps in that sensor's gains, resets the PID state
+void rememberActiveGains();                   // Store pidKp/Ki/Kd as the active sensor's gains
+const char* controlSensorName(ControlSensor sensor);  // "pid" or "aux"
 void setHeaterPower(float dutyCyclePercent);
 void checkHeaterSafety();
 void updatePIDController();

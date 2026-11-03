@@ -45,5 +45,6 @@ void handleListLogs();
 void handleDeleteLog();
 void handleSystemReset();
 void handleAveraging();
+void handlePIDSensor();
 
 #endif // WEB_INTERFACE_H

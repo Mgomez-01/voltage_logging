@@ -27,8 +27,8 @@ All usable GPIOs are in use. Only RX/TX remain free.
 Channel | Connection
 --------|---------------------------------------------------------------
 C0      | Voltage source
-C1      | PID Temp Sensor divider (100k NTC) - controls the heater
-C2      | AUX Temp Sensor divider (MF55 10k NTC) - logged only, not used by the PID
+C1      | PID Temp Sensor divider (100k NTC) - sheet; default PID sensor, safety checks
+C2      | AUX Temp Sensor divider (MF55 10k NTC) - sample; selectable as the PID sensor
 C3-C15  | Free for more analog sensors
 ```
 
@@ -142,7 +142,7 @@ Setting up CD74HC4067 multiplexer... OK
 Multiplexer pins: S0=D1, S1=D2, S2=D3, S3=D4
 Channel 0: Voltage sensor
 Channel 1: PID Temp Sensor (100k NTC)
-Channel 2: AUX Temp Sensor (MF55 10k NTC, not used by PID)
+Channel 2: AUX Temp Sensor (MF55 10k NTC, selectable as the PID sensor)
 Initializing heater PWM control... OK
 PWM pin: GPIO16 (D0), Frequency: 32 Hz, Range: 0-1000
 PWM control via MOSFET (AOD4144) for smooth heater power regulation
@@ -191,4 +191,4 @@ OK
 - PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
 - AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
 - Temperature accuracy: about ±1.5 °C absolute, a few tenths of a °C between the two sensors (ice/boiling calibration + hotplate correction; see README.md, "Calibration")
-- Logging: 50-row buffer written to the SD card, ~93 bytes per row (17 columns). A new 50 MB file about every 54 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).
+- Logging: 50-row buffer written to the SD card, ~95 bytes per row (18 columns). A new 50 MB file about every 53 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).

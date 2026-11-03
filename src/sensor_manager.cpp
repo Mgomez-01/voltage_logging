@@ -9,8 +9,8 @@ const int MUX_S3 = 2;  // D4
 
 // Sensor channels on multiplexer
 const int VOLTAGE_CHANNEL = 0;        // Channel 0: voltage measurement
-const int THERMISTOR_CHANNEL = 1;     // Channel 1: PID Temp Sensor (controls the heater)
-const int AUX_THERMISTOR_CHANNEL = 2; // Channel 2: AUX Temp Sensor (logged only, not in the PID)
+const int THERMISTOR_CHANNEL = 1;     // Channel 1: PID Temp Sensor (sheet; default control sensor, safety checks)
+const int AUX_THERMISTOR_CHANNEL = 2; // Channel 2: AUX Temp Sensor (sample; PID can control on it if selected)
 
 // ADC pin
 const int ADC_PIN = A0;
@@ -144,7 +144,7 @@ void setupMultiplexer() {
   Serial.println("Multiplexer pins: S0=D1, S1=D2, S2=D3, S3=D4");
   Serial.println("Channel 0: Voltage sensor");
   Serial.println(F("Channel 1: PID Temp Sensor (100k NTC)"));
-  Serial.println(F("Channel 2: AUX Temp Sensor (MF55 10k NTC, not used by PID)"));
+  Serial.println(F("Channel 2: AUX Temp Sensor (MF55 10k NTC, selectable as the PID sensor)"));
 }
 
 void selectMuxChannel(int channel) {

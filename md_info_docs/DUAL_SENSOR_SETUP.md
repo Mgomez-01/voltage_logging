@@ -8,7 +8,7 @@ The ESP8266 has a single analog input (A0). A CD74HC4067 16-channel multiplexer 
 - **CD74HC4067** 16-channel analog multiplexer
 - **Voltage source** on channel 0
 - **PID Temp Sensor** on channel 1: 100k NTC thermistor (β = 3950 K, Ender 3 type) with a **100 kΩ** series resistor (measures 98 kΩ on this board). The PID and the safety checks use this sensor.
-- **AUX Temp Sensor** on channel 2: MF55 ultra-thin 10k NTC thermistor (β = 3950 K) with a **2.0 kΩ** series resistor. A second sensor at another location for redundancy and sanity checks. It is logged and displayed only, and not used by the PID or the safety checks.
+- **AUX Temp Sensor** on channel 2: MF55 ultra-thin 10k NTC thermistor (β = 3950 K) with a **2.0 kΩ** series resistor. A second sensor at another location, usually on the sample. It can be selected as the sensor the PID controls (with a sheet limit on the PID Temp Sensor); the safety checks always use the PID Temp Sensor.
 
 ## Wiring
 ```
@@ -90,8 +90,8 @@ Trade-off: the low resistance passes more current through the NTC. At 65 °C it 
 ## CSV format
 Each boot creates a new file on the SD card (`data.log`, `data_1.log`, ...):
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
-64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control
+64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0
 ```
 `temperature` is the PID Temp Sensor and `aux_temp` is the AUX Temp Sensor. Column details are in [README.md](../README.md#data-format).
 
@@ -101,7 +101,7 @@ Setting up CD74HC4067 multiplexer... OK
 Multiplexer pins: S0=D1, S1=D2, S2=D3, S3=D4
 Channel 0: Voltage sensor
 Channel 1: PID Temp Sensor (100k NTC)
-Channel 2: AUX Temp Sensor (MF55 10k NTC, not used by PID)
+Channel 2: AUX Temp Sensor (MF55 10k NTC, selectable as the PID sensor)
 ...
 Testing sensor channels:
 Channel 0 (Voltage): 842 -> 0.8223V

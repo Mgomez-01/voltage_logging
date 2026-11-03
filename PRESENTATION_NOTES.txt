@@ -27,8 +27,8 @@ Files reviewed: src/main.cpp, sensor_manager.*, data_manager.*,
 -------------------------------------------------------------------------------
 The ESP8266 reads three analog signals through a CD74HC4067 multiplexer: a
 voltage, the PID Temp Sensor (100k NTC, controls the heater) and the AUX Temp
-Sensor (MF55 10k NTC at a second location, logged only as a redundancy /
-sanity check). It logs them as CSV to a microSD card and regulates a 12 V
+Sensor (MF55 10k NTC at a second location, usually on the sample). Either
+sensor can be selected as the one the PID controls. It logs them as CSV to a microSD card and regulates a 12 V
 heater with a PID controller that drives an AOD4144 MOSFET using PWM. The board creates its own WiFi network. A web page (served from
 internal flash) shows live data and has buttons to start/stop logging, manage
 the SD log files, control the heater, tune the PID and reset after a fault.
@@ -117,21 +117,24 @@ a) CD74HC4067 16-channel analog multiplexer
    - 3.3 V supply, ~70 ohm on-resistance, EN tied active
    - Firmware waits 10 us after switching + 50 us settling before each read
 
-b) PID Temp Sensor (channel C1) - controls the heater
+b) PID Temp Sensor (channel C1) - the sheet, next to the heater
    - 100 k NTC, Beta = 3950 K (same type as the Creality Ender 3)
    - R25 = 100,000 ohm datasheet (calibrated 97,886 ohm, B 3910); series
      resistor = 100 k part, measured 98,000 ohm
    - Wiring: 3.32V -- [98k] -- C1 -- [NTC] -- GND
-   - Used by the PID and by the over-temp / sensor-fault safety checks
+   - Default PID control sensor; always used by the over-temp /
+     sensor-fault safety checks and by the sheet limit
    - Resolution: ~4-6 ADC counts per C at 60-70 C
 
-   AUX Temp Sensor (channel C2) - redundancy / sanity check
+   AUX Temp Sensor (channel C2) - the sample (second location)
    - MF55 ultra-thin 10 k NTC, Beta = 3950 K (B25/50), +/-1 %, 0.7 mW/C
      (calibrated R25 = 10,631 ohm, B = 4096)
    - Series resistor = 2.0 k ohm, measured 2.00 k (sized for 60-70 C, where the
      NTC is ~2.5-1.8 k): ~9 ADC counts per C (~0.11 C per count)
    - Wiring: 3.3V -- [2.0k] -- C2 -- [MF55 NTC] -- GND
-   - Logged and displayed only: NOT used by the PID or the safety checks
+   - Can be selected as the PID control sensor (main page or /tune); not
+     used by the safety checks, but a fault on it stops the PID when it is
+     the control sensor
    - Self-heating with 2.0k: ~1.4 mW at 65 C, up to ~1.9 C high in still
      air (less when pressed against a surface; 2.7k reduces it ~25 %)
 
@@ -223,20 +226,29 @@ Setpoint / limits:
   Settable range .............. 0 to 130 C  (GET /temp/set?temp=<value>)
   MAX_SAFE_TEMPERATURE ........ 130.0 C  -> emergency shutdown
   Sensor-fault window ......... < -50 C or > 200 C while heater is on -> shutdown
-  MAX_HEATER_TIME ............. 1,800,000 ms = 30 min continuous heating -> shutdown
+  MAX_HEATER_TIME ............. 3,600,000 ms = 1 h continuous heating -> shutdown
+                                (was 30 min; raised for ~45 min multi-temp runs)
   Reset allowed below ......... 120 C (MAX_SAFE_TEMPERATURE - 10) and only
                                 with a valid sensor reading
 
-PID gains (interim defaults from a model of the sheet, until tuned on /tune):
-  Kp = 2.3      Ki = 0.045     Kd = 0
+Control sensor: PID Temp Sensor (sheet, default) or AUX Temp Sensor (sample),
+  switchable at runtime (GET /pid/sensor?s=pid|aux). Each has its own gains.
+  Sheet limit while controlling on AUX: 120 C default (40-125 C); heater
+  power tapers to 0 over the last 5 C below it (soft limit: ~2 C overshoot
+  possible in a fast rise). AUX or sheet sensor fault -> PID off, heater off.
+
+PID gains (interim defaults from a model, until tuned on /tune):
+  On the PID Temp Sensor:  Kp = 2.3   Ki = 0.045   Kd = 0
+  On the AUX Temp Sensor:  Kp = 1.0   Ki = 0.008   Kd = 0
   Changeable at runtime: GET /pid/params?kp=&ki=&kd=  (resets the integral)
-  Saved from the /tune page to /pid.json on the board's flash, loaded at boot.
+  Saved from the /tune or main page to /pid.json on the board's flash
+  (both gain sets, control sensor, sheet limit), loaded at boot.
   (Before 2026-10-29: 2.2 / 0.25 / 0.15 with a 25 % integral cap.)
 
 Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
-  temp       = latest buffered PID Temp Sensor reading, or a direct read of
-               that sensor if the buffer is empty (so the PID works with
-               logging OFF). The AUX Temp Sensor is never used here.
+  temp       = latest buffered reading of the control sensor (PID Temp
+               Sensor or AUX), or a direct read if the buffer is empty (so the
+               PID works with logging OFF).
   skip update if temp is invalid (< -50, > 200, NaN)
   error      = target - temp
   P          = Kp * error
@@ -244,7 +256,8 @@ Algorithm (updatePIDController, every 500 ms, dt = 0.5 s):
                direction the error pushes (anti-windup)
   I          = Ki * integral, limited to +/-100 % of output
   D          = -Kd * (temp - last_temp) / 0.5    (on the measurement)
-  output     = P + I + D, clamped to 0..100 %
+  output     = P + I + D, clamped to 0..100 % (and, on AUX, to the sheet
+               limit taper: (limit - sheet) * 20 %/C)
   heater PWM duty = output   (continuous, no on/off threshold)
 
 How it behaves (for slides):
@@ -259,24 +272,26 @@ How it behaves (for slides):
   - D acts on the measured temperature, so a setpoint change causes no kick.
 
 PID tuning page (/tune, firmware src/tuning.cpp):
-  1. Power step test, PID off: hold power 1 until the sheet settles, step to
-     power 2, record until settled, heater off.
+  1. Power step test, PID off: hold power 1 until the control sensor
+     settles, step to power 2, record until settled, heater off.
   2. The page fits delay, time constant and gain (C per % power) and
      suggests PI gains (Skogestad SIMC): fast / critically damped / smooth.
   3. Setpoint test, PID on: up to 4 setpoints, overshoot and settling time
      per step. Apply, or save as boot defaults (/pid.json).
-  Safety: heater off above 120 C, on sensor fault, emergency shutdown,
-  after 25 min, or if the heater/PID is changed from the main page.
+  Tests use the selected control sensor. Safety: heater off if the sheet
+  passes 120 C, on sensor fault, emergency shutdown, after 55 min, or if the
+  heater/PID is changed from the main page.
   - The PID runs whether or not logging is on.
 
 Manual control: /relay/on = 100 % PWM (disables PID); /relay/off = 0 %.
   (The route names are left over from the relay version.)
 
 Safety layers:
-  1. Ticker every 500 ms: heater on for more than 30 min straight -> PWM 0,
+  1. Ticker every 500 ms: heater on for more than 1 h straight -> PWM 0,
      shutdown
   2. Main loop: over-temp (> 130 C) and sensor fault -> shutdown
-     (PID Temp Sensor only; the AUX Temp Sensor does not trigger shutdowns)
+     (PID Temp Sensor only; the AUX Temp Sensor does not trigger shutdowns,
+     but when it is the control sensor a fault on it stops the PID)
   3. Main loop: safety ticker hasn't run for 1.5 s -> shutdown
   4. Software watchdog ticker (8 s): loop stalled -> PWM 0, shutdown
      (8 s leaves room for slow SD writes)
@@ -297,7 +312,7 @@ File rotation ........ When the current file reaches 50 MB (MAX_FILE_SIZE =
                        50,000,000 B), a new data_N.log is started with a header
 Header ............... timestamp,voltage,temperature,heater_state,target_temp,pid_output,
                        voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-                       aux_temp,aux_adc,aux_v,samples
+                       aux_temp,aux_adc,aux_v,samples,control
 Write strategy ....... 50-row RAM buffer -> open file, append 50 rows, close.
                        Also flushed on Stop Logging and on low-heap auto-stop.
 Write protection ..... 5 s max per write; watchdog fed every 5 rows; skips a
@@ -337,10 +352,13 @@ CSV columns:
 |   |              |       |            | the exact value aux_temp is           |
 |   |              |       |            | calculated from                       |
 |17 | samples      | cycles| integer    | 1 = raw row, N = averaged row         |
+|18 | control      | 0/1   | integer    | Sensor the PID controls: 0 = PID Temp |
+|   |              |       |            | Sensor, 1 = AUX (target_temp is for   |
+|   |              |       |            | that sensor)                          |
 +---+--------------+-------+------------+---------------------------------------+
 * Mean count with 2 decimals in averaged rows (samples > 1).
 
-Columns 1-6 are the original format; 7-17 were added after them.
+Columns 1-6 are the original format; 7-18 were added after them.
 thermistor_v and aux_v let you re-check every temperature:
   P = Rs * V / (3.32 - V);  R = P * 320k / (320k - P)
   1/T = 1/298.15 + ln(R/R25)/B  (T in K)
@@ -353,14 +371,14 @@ thermistor_v and aux_v let you re-check every temperature:
 
 Example rows: two of your logged rows as the corrected firmware logs them
 (raw: room temperature, then stable at 45 C), then an averaged row:
-  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples
-  64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1
-  259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1
-  3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32   (averaged, 32 cycles)
+  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control
+  64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0
+  259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0
+  3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0   (averaged, 32 cycles)
 
 Data volume (theoretical maximum rate):
-  Averaging off: ~93 bytes/row x ~167 rows/s = ~15.5 KB/s = ~56 MB/hour
-  -> a new 50 MB file about every 54 min; an 8 GB card holds ~143 h
+  Averaging off: ~95 bytes/row x ~167 rows/s = ~15.9 KB/s = ~57 MB/hour
+  -> a new 50 MB file about every 53 min; an 8 GB card holds ~140 h
   Averaging on (N = 32): ~5 rows/s, ~2 MB/hour
   (Real rate is lower, see section 5. Timestamps restart at 0 in each
    boot's file, so files don't mix runs.)
@@ -389,7 +407,8 @@ v1 (main/heater_pid/html_fix, May 2025): LittleFS internal flash, relay on
 v2 (SD_card_edition, Oct-Nov 2025): logs moved to the microSD card; new file
    per boot; web log manager. Internal flash would fill in minutes.
 v3 (SD_pwm_edition, Dec 2025): relay replaced by AOD4144 MOSFET PWM;
-   continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit, 500 ms PID,
+   continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit (1 h since
+   2026-10-31), 500 ms PID,
    new gains 2.2/0.25/0.15.
 v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    updates, low-heap auto-stop, 50 MB file rotation, System Reset button,
@@ -413,11 +432,11 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    show a ~31 ms period.
 3. Over-temperature check gap: the over-temp and sensor-fault checks use the
    logging buffer. With logging OFF the buffer is empty and those checks are
-   skipped, even though the PID can still heat. Only the 30 min runtime limit
+   skipped, even though the PID can still heat. Only the 1 h runtime limit
    and the watchdog apply then. Keep logging on whenever the heater runs, or
    make the safety check read the sensor directly.
-4. 30-minute limit: under PID the duty rarely drops to 0 %, so a long hold
-   counts as "continuous heating" and triggers a shutdown at 30 min.
+4. 1-hour limit (was 30 min): under PID the duty rarely drops to 0 %, so a
+   long hold counts as "continuous heating" and triggers a shutdown at 1 h.
 5. ADC scaling: on a NodeMCU/D1 mini, A0's onboard 220k/100k divider gives a
    3.2 V full scale and a 320 k load. The thermistor conversions now model
    both (see section 4b). The voltage channel still uses ADC/1024 (0-1 V), so

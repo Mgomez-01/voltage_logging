@@ -12,7 +12,7 @@ extern const int MUX_S3;  // D4
 // Sensor channels on multiplexer
 extern const int VOLTAGE_CHANNEL;        // Channel 0: voltage measurement
 extern const int THERMISTOR_CHANNEL;     // Channel 1: PID Temp Sensor
-extern const int AUX_THERMISTOR_CHANNEL; // Channel 2: AUX Temp Sensor (not in the PID)
+extern const int AUX_THERMISTOR_CHANNEL; // Channel 2: AUX Temp Sensor (selectable as the PID sensor)
 
 // ADC pin
 extern const int ADC_PIN;

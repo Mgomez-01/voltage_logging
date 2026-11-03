@@ -7,7 +7,7 @@ const int HEATER_PWM_PIN = 16; // GPIO16 (D0) for PWM control of MOSFET
 bool heaterEnabled = false;
 float heaterDutyCycle = 0.0; // Current PWM duty cycle (0-100%)
 unsigned long heaterStartTime = 0; // Time when heater was enabled
-const unsigned long MAX_HEATER_TIME = 2*1800000; // 1hr safety timeout
+const unsigned long MAX_HEATER_TIME = 3600000UL; // 1 h continuous-heating safety limit (was 30 min)
 const float MAX_SAFE_TEMPERATURE = 130.0; // Maximum safe temperature in °C
 
 // PWM configuration
@@ -27,9 +27,30 @@ bool pidEnabled = false;
 // Gains saved from /tune (/pid/save) are loaded from LittleFS at boot and
 // replace these. (Before the anti-windup fix the gains were 2.2 / 0.25 / 0.15;
 // with the old integral cap they overshoot ~10 °C now.)
-float pidKp = 2.3;    // Proportional gain (% per °C)
-float pidKi = 0.045;  // Integral gain (% per °C·s)
-float pidKd = 0.0;    // Derivative gain (% per °C/s)
+float pidKp = 2.3;    // Proportional gain (% per °C)   } active gains, for the
+float pidKi = 0.045;  // Integral gain (% per °C·s)      } sensor selected in
+float pidKd = 0.0;    // Derivative gain (% per °C/s)    } controlSensor
+
+// Which sensor the PID controls. Each sensor keeps its own gains: the sample
+// (AUX) responds much more slowly than the sheet, so it needs gentler gains.
+// AUX defaults are from a model fitted to the 2026-10-26 run (sample settles
+// ~63 % of the way to the sheet temperature with an ~80 s lag), chosen for no
+// overshoot. Tune them on /tune with AUX selected.
+ControlSensor controlSensor = CONTROL_PID_SENSOR;
+float sensorGains[2][3] = {
+  {2.3, 0.045, 0.0},   // CONTROL_PID_SENSOR (sheet)
+  {1.0, 0.008, 0.0}    // CONTROL_AUX_SENSOR (sample)
+};
+
+// Sheet limit while the PID controls on the AUX sensor. The sheet runs ~25 °C
+// above the sample near 70 °C, so it needs its own cap. Heater power is tapered
+// to 0 over the last SHEET_LIMIT_BAND degrees below the limit.
+float sheetLimit = 120.0;
+const float SHEET_LIMIT_BAND = 5.0;
+const float MIN_SHEET_LIMIT = 40.0;
+const float MAX_SHEET_LIMIT = 125.0;   // MAX_SAFE_TEMPERATURE - 5
+bool sheetLimited = false;             // Last PID update was held back by the sheet limit
+char pidFaultMessage[64] = "";         // Why the PID last stopped itself (empty = no fault)
 float pidOutput = 0.0;
 float pidError = 0.0;
 float pidLastError = 0.0;
@@ -125,7 +146,7 @@ void checkHeaterSafety() {
       emergencyShutdown = true;
     }
     
-    // Check for maximum runtime (MAX_HEATER_TIME = 1hr continuous heating)
+    // Check for maximum runtime (MAX_HEATER_TIME = 1 h continuous heating)
     if (heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
       Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
       emergencyShutdown = true;
@@ -144,7 +165,41 @@ void checkHeaterSafety() {
 
 // Clear the PID's memory (integral, last error/temperature). Call whenever the
 // PID is (re)enabled or its gains change.
+void rememberActiveGains() {
+  sensorGains[controlSensor][0] = pidKp;
+  sensorGains[controlSensor][1] = pidKi;
+  sensorGains[controlSensor][2] = pidKd;
+}
+
+void setControlSensor(ControlSensor sensor) {
+  if (sensor != CONTROL_PID_SENSOR && sensor != CONTROL_AUX_SENSOR) return;
+  rememberActiveGains();                 // Keep the old sensor's gains
+  controlSensor = sensor;
+  pidKp = sensorGains[sensor][0];
+  pidKi = sensorGains[sensor][1];
+  pidKd = sensorGains[sensor][2];
+  resetPIDState();                       // Start the integral fresh on the new sensor
+  sheetLimited = false;
+  Serial.print(F("PID: now controlling on the "));
+  Serial.println(sensor == CONTROL_AUX_SENSOR ? F("AUX Temp Sensor (sample)") : F("PID Temp Sensor (sheet)"));
+}
+
+const char* controlSensorName(ControlSensor sensor) {
+  return sensor == CONTROL_AUX_SENSOR ? "aux" : "pid";
+}
+
+static void pidFault(const char* message) {
+  strncpy(pidFaultMessage, message, sizeof(pidFaultMessage) - 1);
+  pidFaultMessage[sizeof(pidFaultMessage) - 1] = '\0';
+  pidEnabled = false;
+  heaterEnabled = false;
+  setHeaterPower(0.0);
+  Serial.print(F("PID: stopped, heater off - "));
+  Serial.println(pidFaultMessage);
+}
+
 void resetPIDState() {
+  pidFaultMessage[0] = '\0';
   pidIntegral = 0;
   pidLastError = 0;
   pidLastInput = NAN;
@@ -162,37 +217,49 @@ void updatePIDController() {
   }
   #endif
   
-  // Find the most recent valid temperature reading
-  float currentTemp = NAN;
+  // Most recent readings of both sensors: the latest logged row, or direct
+  // reads when the buffer is empty (logging off, or just written to the card)
+  float sheetTemp = NAN;   // PID Temp Sensor (sheet)
+  float auxTemp = NAN;     // AUX Temp Sensor (sample)
   int idx = -1;
   
   if (bufferIndex > 0) {
-    // Use the most recent reading in the buffer
     idx = bufferIndex - 1;
-    currentTemp = readings[idx].temperature;
+    sheetTemp = readings[idx].temperature;
+    auxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
   } else {
-    // Buffer was reset or no readings yet - try to get current temperature directly
     selectMuxChannel(THERMISTOR_CHANNEL);
     delayMicroseconds(100);  // Small delay for stability
-    int adcValue = analogRead(ADC_PIN);
-    currentTemp = convertThermistorToTemperature(adcValue);
+    sheetTemp = convertThermistorToTemperature(analogRead(ADC_PIN));
+    if (controlSensor == CONTROL_AUX_SENSOR) {
+      selectMuxChannel(AUX_THERMISTOR_CHANNEL);
+      delayMicroseconds(100);
+      auxTemp = convertAuxThermistorToTemperature(analogRead(ADC_PIN));
+    }
     idx = -1;  // Indicate direct reading
-    
-    #if DEBUG_PID
-    Serial.print("PID: Using direct sensor reading, ADC=");
-    Serial.print(adcValue);
-    Serial.print(", Temp=");
-    Serial.println(currentTemp);
-    #endif
   }
+  bool sheetValid = !(isnan(sheetTemp) || sheetTemp < -50 || sheetTemp > 200);
+  bool auxValid = !(isnan(auxTemp) || auxTemp < -50 || auxTemp > 200);
   
-  // Validate temperature reading before using it for PID
-  if (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200) {
-    #if DEBUG_PID
-    Serial.print("PID: Invalid temperature reading: ");
-    Serial.println(currentTemp);
-    #endif
-    return;  // Skip PID update with invalid temperature
+  float currentTemp;
+  if (controlSensor == CONTROL_AUX_SENSOR) {
+    // Controlling on the sample. Both sensors must work: AUX is the feedback,
+    // and the sheet reading enforces the sheet limit. The safety system only
+    // watches the PID Temp Sensor, so a failed AUX sensor stops the PID here.
+    if (!auxValid) { pidFault("AUX Temp Sensor fault while controlling on AUX"); return; }
+    if (!sheetValid) { pidFault("PID Temp Sensor (sheet) fault: sheet limit can't be enforced"); return; }
+    currentTemp = auxTemp;
+  } else {
+    // Controlling on the sheet: skip an invalid reading (the safety system
+    // shuts down on a sensor fault while the heater is on)
+    if (!sheetValid) {
+      #if DEBUG_PID
+      Serial.print("PID: Invalid temperature reading: ");
+      Serial.println(sheetTemp);
+      #endif
+      return;
+    }
+    currentTemp = sheetTemp;
   }
   
   #if DEBUG_PID
@@ -236,9 +303,26 @@ void updatePIDController() {
   //     supply whatever steady power a setpoint needs. (The old +/-100 clamp on
   //     the raw integral capped it at 25 % output with Ki = 0.25, which left the
   //     sheet several degrees short of high setpoints.)
+  // Upper output limit: 100 %, or less when controlling on AUX and the sheet
+  // is within SHEET_LIMIT_BAND of the sheet limit (0 % at the limit)
+  float highLimit = 100.0;
+  if (controlSensor == CONTROL_AUX_SENSOR) {
+    float cap = (sheetLimit - sheetTemp) * 100.0 / SHEET_LIMIT_BAND;
+    if (cap < 0) cap = 0;
+    if (cap < highLimit) highLimit = cap;
+  }
   float candidate = pidIntegral + pidError * dt;
   float unsaturated = proportional + pidKi * candidate + derivative;
-  bool saturatedHigh = unsaturated > 100 && pidError > 0;
+  // Report "sheet limited" for 5 s after the limit last held the output back:
+  // near the limit, sheet sensor noise switches the taper on and off from one
+  // update to the next
+  static unsigned long lastLimitedMs = 0;
+  bool limitedNow = (controlSensor == CONTROL_AUX_SENSOR) && highLimit < 100.0 &&
+                    unsaturated >= highLimit - 0.5;
+  if (limitedNow) lastLimitedMs = millis();
+  sheetLimited = (controlSensor == CONTROL_AUX_SENSOR) && lastLimitedMs != 0 &&
+                 millis() - lastLimitedMs < 5000;
+  bool saturatedHigh = unsaturated > highLimit && pidError > 0;
   bool saturatedLow = unsaturated < 0 && pidError < 0;
   if (!saturatedHigh && !saturatedLow) {
     pidIntegral = candidate;
@@ -253,8 +337,8 @@ void updatePIDController() {
   // Compute PID output (0-100%)
   pidOutput = proportional + integral + derivative;
   
-  // Clamp output to 0-100%
-  if (pidOutput > 100) pidOutput = 100;
+  // Clamp output to 0-100 % (and the sheet limit when controlling on AUX)
+  if (pidOutput > highLimit) pidOutput = highLimit;
   if (pidOutput < 0) pidOutput = 0;
   
   // Apply PID output directly to heater PWM

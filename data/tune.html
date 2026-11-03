@@ -44,7 +44,7 @@
 </head>
 <body>
 <header>
-  <h1>PID Tuning (PID Temp Sensor / sheet)</h1>
+  <h1>PID Tuning: <span id="ctlTitle">PID Temp Sensor (sheet)</span></h1>
   <a href="/">&larr; Back to the logger</a>
 </header>
 <main>
@@ -60,6 +60,13 @@
     <div class="stat"><div class="k">Sheet trend</div><div class="v" id="sSlope">-</div></div>
     <div class="stat"><div class="k">Gains in use</div><div class="v" id="sGains" style="font-size:15px">-</div></div>
   </div>
+  <div class="row" style="margin-top:10px">
+    <span style="font-size:14px">Tune the loop that controls on:</span>
+    <label style="flex-direction:row;align-items:center;gap:5px;color:var(--text)"><input type="radio" name="ctl" value="pid" style="width:auto" onchange="setControl(this.value)"> PID Temp Sensor (sheet)</label>
+    <label style="flex-direction:row;align-items:center;gap:5px;color:var(--text)"><input type="radio" name="ctl" value="aux" style="width:auto" onchange="setControl(this.value)"> AUX Temp Sensor (sample)</label>
+    <span class="note" id="sheetLimitNote" style="margin:0"></span>
+  </div>
+  <p class="note">Each sensor keeps its own gains. The fit and the setpoint metrics use the selected sensor. The same choice is on the main page.</p>
   <div id="message">Connecting...</div>
   <div class="row" style="margin-top:10px">
     <button class="stop" id="stopBtn" onclick="stopTest()">Stop test (heater off)</button>
@@ -80,15 +87,16 @@
 
 <div class="card">
   <h2>1. Power step test (PID off)</h2>
-  <p class="note">Set up the whole fixture as for a measurement. The heater holds the first power until the sheet settles
+  <p class="note">Set up the whole fixture as for a measurement. The heater holds the first power until the selected sensor settles
     (at least 2 min, flatter than 0.15 &deg;C/min), then steps to the second power and records the response until it settles again.
-    The heater then turns off. Pick powers that put the sheet around your working range: from the 2026-10-26 run,
-    about 25&ndash;35&nbsp;% holds the sheet near 85&ndash;100&nbsp;&deg;C. Repeat at a second range if the gains differ much.
-    The test stops if the sheet passes <span id="maxTemp">120</span>&nbsp;&deg;C.</p>
+    The heater then turns off. Pick powers around your working range: from the 2026-10-26 run, about 25&ndash;35&nbsp;% holds the
+    sheet near 85&ndash;100&nbsp;&deg;C and the sample near 60&ndash;70&nbsp;&deg;C. The sample responds much more slowly than the sheet,
+    so allow 15&ndash;20 min per phase when tuning on AUX. The test stops if the sheet passes <span id="maxTemp">120</span>&nbsp;&deg;C,
+    or after 55 min (under the 1&nbsp;h heater limit).</p>
   <div class="row">
     <label>Start power (%)<input id="p1" type="number" value="25" min="0" max="80" step="1"></label>
     <label>Step to (%)<input id="p2" type="number" value="35" min="0" max="80" step="1"></label>
-    <label>Max minutes per phase<input id="pmax" type="number" value="8" min="3" max="12" step="1"></label>
+    <label>Max minutes per phase<input id="pmax" type="number" value="8" min="3" max="20" step="1"></label>
     <button id="stepBtn" onclick="startStep()">Start power step test</button>
   </div>
 </div>
@@ -104,7 +112,7 @@
     Overshoot, settling time (to &plusmn;0.5 &deg;C) and remaining error are measured for each step.</p>
   <div class="row">
     <label>Setpoints (&deg;C)<input id="sps" class="wide" type="text" value="80,90,95"></label>
-    <label>Hold (min)<input id="hold" type="number" value="5" min="1" max="10" step="1"></label>
+    <label>Hold (min)<input id="hold" type="number" value="5" min="1" max="15" step="1"></label>
     <label>Kp<input id="kp" type="number" step="0.01"></label>
     <label>Ki<input id="ki" type="number" step="0.001"></label>
     <label>Kd<input id="kd" type="number" step="0.01"></label>
@@ -115,8 +123,9 @@
     <button class="secondary" onclick="applyGains()">Apply these gains now</button>
     <button class="secondary" onclick="saveGains()">Apply and save as boot defaults</button>
   </div>
-  <p class="note">"Apply" changes the running gains (lost at reboot). "Save" also stores them on the board's flash
-    (<code>/pid.json</code>), loaded at every boot. Uploading the filesystem image again erases the saved gains.</p>
+  <p class="note">"Apply" changes the selected sensor's running gains (lost at reboot). "Save" also stores both sensors' gains,
+    the control sensor and the sheet limit on the board's flash (<code>/pid.json</code>), loaded at every boot.
+    Uploading the filesystem image again (<code>make filesystem</code> or <code>make deploy</code>) erases them.</p>
 </div>
 
 </main>
@@ -127,6 +136,9 @@ var gen = -1;
 var tuneStatus = null;
 var fit = null;
 var gainsPrefilled = false;
+var shownControl = null;
+// Column of the controlled sensor in data rows: [t, pid, aux, duty]
+function ci() { return tuneStatus && tuneStatus.control === 'aux' ? 2 : 1; }
 
 function $(id) { return document.getElementById(id); }
 function fmt(v, d) { return (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(d); }
@@ -182,13 +194,29 @@ function showStatus(s) {
   $('stopBtn').disabled = !s.running;
   $('stepBtn').disabled = s.running || s.emergency;
   $('spBtn').disabled = s.running || s.emergency;
-  if (!gainsPrefilled) {
+  if (s.control !== shownControl) {
+    // Control sensor changed (here, on the main page, or first load): show its
+    // gains and suitable defaults
+    shownControl = s.control;
+    var aux = s.control === 'aux';
+    document.querySelectorAll('input[name="ctl"]').forEach(function (r) { r.checked = (r.value === s.control); });
+    $('ctlTitle').textContent = aux ? 'AUX Temp Sensor (sample)' : 'PID Temp Sensor (sheet)';
     $('kp').value = Number(s.kp).toFixed(3); $('ki').value = Number(s.ki).toFixed(4); $('kd').value = Number(s.kd).toFixed(3);
-    gainsPrefilled = true;
+    $('sps').value = aux ? '60,65,70' : '80,90,95';
+    $('pmax').value = aux ? 18 : 8;
+    $('hold').value = aux ? 12 : 5;
+    fit = null;
   }
+  document.querySelectorAll('input[name="ctl"]').forEach(function (r) { r.disabled = s.running; });
+  $('sheetLimitNote').textContent = s.control === 'aux' ? ('Sheet limit ' + fmt(s.sheetLimit, 0) + ' \u00b0C' + (s.sheetLimited ? ' (reached: power held back)' : '')) : '';
 }
 
 // ---------------------------------------------------------------- actions
+function setControl(sensor) {
+  fetch('/pid/sensor?s=' + sensor).then(function (r) { return r.json(); })
+    .then(function () { shownControl = null; })
+    .catch(function (e) { alert('Error: ' + e.message); });
+}
 function startStep() {
   var q = '/tune/step?p1=' + $('p1').value + '&p2=' + $('p2').value + '&max=' + $('pmax').value;
   call(q).then(function (t) { setMessage(t); fit = null; }).catch(function (e) { alert(e.message); });
@@ -229,12 +257,13 @@ function downloadCsv() {
 function fitStep() {
   if (!tuneStatus || tuneStatus.test !== 'step' || !tuneStatus.step || tuneStatus.step.at < 0) return null;
   var tStep = tuneStatus.step.at, du = tuneStatus.step.p2 - tuneStatus.step.p1;
-  var before = data.filter(function (s) { return s[0] < tStep && s[0] >= tStep - 60 && s[1] !== null; });
-  var after = data.filter(function (s) { return s[0] >= tStep && s[1] !== null; });
+  var c = ci();
+  var before = data.filter(function (s) { return s[0] < tStep && s[0] >= tStep - 60 && s[c] !== null; });
+  var after = data.filter(function (s) { return s[0] >= tStep && s[c] !== null; });
   if (before.length < 5 || after.length < 20) return null;
-  var y0 = before.reduce(function (a, s) { return a + s[1]; }, 0) / before.length;
+  var y0 = before.reduce(function (a, s) { return a + s[c]; }, 0) / before.length;
   var t = after.map(function (s) { return s[0] - tStep; });
-  var y = after.map(function (s) { return s[1] - y0; });
+  var y = after.map(function (s) { return s[c] - y0; });
   var span = t[t.length - 1];
   var best = null;
   for (var theta = 0; theta <= Math.min(90, span / 2); theta += 0.5) {
@@ -279,7 +308,7 @@ function showFit() {
     ['Smooth (slower, very robust)', gainsFor(fit, Math.max(10, 4 * fit.theta, fit.tau / 3)), false]
   ];
   var warn = [];
-  if (tuneStatus.step && !tuneStatus.step.settled1) warn.push('the sheet had not fully settled before the step');
+  if (tuneStatus.step && !tuneStatus.step.settled1) warn.push('the selected sensor had not fully settled before the step');
   if (fit.coverage < 3) warn.push('only ' + fit.coverage.toFixed(1) + ' time constants were recorded after the step (3+ is better: use a longer max time)');
   if (fit.K <= 0) warn.push('the gain came out negative: check the powers and the sensor');
   var html = '<div class="scroll"><table><tr><th>Delay (dead time)</th><th>Time constant</th><th>Gain</th><th>Temperature change</th><th>Fit error (RMS)</th></tr>' +
@@ -301,20 +330,20 @@ function showFit() {
 function showSetpointMetrics() {
   var box = $('spBox');
   if (!tuneStatus || tuneStatus.test !== 'setpoint' || !tuneStatus.sp) { box.innerHTML = ''; return; }
-  var sp = tuneStatus.sp, rows = '';
+  var sp = tuneStatus.sp, rows = '', c = ci();
   for (var i = 0; i < sp.list.length; i++) {
     var t0 = sp.starts[i];
     if (t0 < 0) continue;
     var t1 = (i + 1 < sp.list.length && sp.starts[i + 1] >= 0) ? sp.starts[i + 1] : Infinity;
-    var seg = data.filter(function (s) { return s[0] >= t0 && s[0] < t1 && s[1] !== null; });
+    var seg = data.filter(function (s) { return s[0] >= t0 && s[0] < t1 && s[c] !== null; });
     if (seg.length < 3) continue;
-    var target = sp.list[i], start = seg[0][1], up = target >= start;
+    var target = sp.list[i], start = seg[0][c], up = target >= start;
     // Settling: last time the 10 s average was outside +/-0.5 degC. Averaging
     // keeps ADC noise (near 90 degC the sheet sensor has ~2 counts per degC)
     // from looking like an unsettled loop.
     var avg = seg.map(function (s) {
       var w = seg.filter(function (o) { return Math.abs(o[0] - s[0]) <= 5; });
-      return w.reduce(function (a, o) { return a + o[1]; }, 0) / w.length;
+      return w.reduce(function (a, o) { return a + o[c]; }, 0) / w.length;
     });
     var peak = avg.reduce(function (a, v) { return up ? Math.max(a, v) : Math.min(a, v); }, avg[0]);
     var overshoot = up ? peak - target : target - peak;
@@ -322,7 +351,7 @@ function showSetpointMetrics() {
     for (var j = avg.length - 1; j >= 0; j--) { if (Math.abs(avg[j] - target) > 0.5) { settleT = j + 1 < seg.length ? seg[j + 1][0] - t0 : null; break; } }
     if (j < 0) settleT = 0;
     var tail = seg.filter(function (s) { return s[0] >= seg[seg.length - 1][0] - 60; });
-    var err = tail.reduce(function (a, s) { return a + s[1]; }, 0) / tail.length - target;
+    var err = tail.reduce(function (a, s) { return a + s[c]; }, 0) / tail.length - target;
     var done = t1 !== Infinity || tuneStatus.state !== 'setpoint';
     rows += '<tr><td>' + fmt(start, 1) + ' &rarr; ' + fmt(target, 1) + ' &deg;C</td><td>' + (overshoot > 0 ? fmt(overshoot, 2) : '0') + ' &deg;C</td><td>' +
       (settleT === null ? (done ? 'not settled' : '...') : fmt(settleT / 60, 1) + ' min') + '</td><td>' + fmt(err, 2) + ' &deg;C</td></tr>';

@@ -60,7 +60,7 @@
         <div class="debug">
             <strong>Basic Info:</strong><br>
             ESP8266 IP: {{WIFI_IP}} | WebSocket Port: 81 | ADC Pin: A0 (pin {{ADC_PIN_NUM}})<br>
-            Channel 0: Voltage Sensor | Channel 1: PID Temp Sensor (100k NTC) | Channel 2: AUX Temp Sensor (10k NTC, not used by PID) | Heater PWM: GPIO16 (D0) via AOD4144 MOSFET | Logs: SD card<br>
+            Channel 0: Voltage Sensor | Channel 1: PID Temp Sensor (100k NTC) | Channel 2: AUX Temp Sensor (10k NTC, selectable as the PID sensor) | Heater PWM: GPIO16 (D0) via AOD4144 MOSFET | Logs: SD card<br>
             Uptime: <span id="uptime">0</span>s | Chart: <span id="chartStatus">Checking...</span> | Logging: <span id="loggingStatus">{{LOGGING_STATUS_TEXT_INITIAL}}</span>
         </div>
 
@@ -94,7 +94,7 @@
             </div>
             <div style="margin-bottom: 15px;">
                 Runtime: <span id="heaterRuntime">0:00:00</span>
-                | Safety Timeout: 30 minutes
+                | Safety Timeout: {{SAFETY_TIMEOUT_MIN}} minutes of continuous heating
             </div>
             <button onclick="relayOn()" class="btn" id="relayOnBtn">Turn ON</button>
             <button onclick="relayOff()" class="btn danger" id="relayOffBtn">Turn OFF</button>
@@ -118,8 +118,25 @@ function resetSystem() {
 
         <div class="control-panel">
             <h3>Temperature Control</h3>
+            <div style="margin-bottom: 15px; line-height: 2;">
+                <strong>Control sensor:</strong>
+                <label><input type="radio" name="ctlSensor" value="pid" {{CTL_PID_CHECKED}} onchange="setControlSensor(this.value)"> PID Temp Sensor (sheet)</label>
+                <label style="margin-left: 10px;"><input type="radio" name="ctlSensor" value="aux" {{CTL_AUX_CHECKED}} onchange="setControlSensor(this.value)"> AUX Temp Sensor (sample)</label>
+                <br>
+                Sheet limit while controlling on AUX:
+                <input type="number" id="sheetLimitInput" class="temp-input" value="{{SHEET_LIMIT_INITIAL}}" min="{{SHEET_LIMIT_MIN}}" max="{{SHEET_LIMIT_MAX}}" step="1"> °C
+                <button onclick="setSheetLimit()" class="btn" style="padding: 5px 15px;">Set</button>
+                <button onclick="savePidDefaults()" class="btn" style="padding: 5px 15px; background-color: #607d8b;">Save sensor, gains + limit as boot defaults</button>
+                <div style="font-size: 13px; color: #666; line-height: 1.4;">
+                    Each sensor keeps its own PID gains (switching swaps them in). With AUX selected the heater power tapers to 0 as the sheet
+                    (PID Temp Sensor) approaches the sheet limit, and the PID stops if either sensor fails. Tune each sensor's gains on the
+                    <a href="/tune">PID tuning page</a>.
+                </div>
+                <div id="sheetLimitedFlag" style="display: none; color: #c0392b; font-weight: bold;">Sheet limit reached: heater power is being held back</div>
+                <div id="pidFaultFlag" style="display: none; color: #c0392b; font-weight: bold;"></div>
+            </div>
             <div style="margin-bottom: 15px;">
-              PID Temp Sensor:
+              <span id="controlTempLabel">PID Temp Sensor</span>:
 	      <span id="currentTemp"
 		    style="
 			   font-size: 20px;
@@ -225,7 +242,7 @@ function resetSystem() {
             <div class="plot-legend">
                 <span style="color:#c0392b">PID Temp Sensor (sheet)</span>
                 <span style="color:#e67e22">AUX Temp Sensor (sample)</span>
-                <span style="color:#1e8449">Setpoint (while PID is on)</span>
+                <span style="color:#1e8449">Setpoint, on the controlled sensor (while PID is on)</span>
                 <span style="color:#2471a3">Right axis</span>
             </div>
         </div>
@@ -551,7 +568,13 @@ function resetSystem() {
             const auxTemperature = data ? validTemp(data.auxTemperature) : null;
             document.getElementById('currentVoltage').textContent = voltage.toFixed(4);
             document.getElementById('currentTemperature').textContent = temperature.toFixed(2);
-            document.getElementById('currentTemp').textContent = temperature.toFixed(2);
+            // The Temperature Control readout shows the sensor the PID controls
+            const ctl = data && data.ctl !== undefined ? (data.ctl === 1 ? 'aux' : 'pid')
+                      : (data && data.control ? data.control : controlSensor);
+            if (ctl !== controlSensor) showControlSensor(ctl);
+            const controlled = ctl === 'aux' ? auxTemperature : temperature;
+            document.getElementById('currentTemp').textContent = controlled !== null ? controlled.toFixed(2) : 'N/A';
+            if (data && data.sheetLimited !== undefined) showPidFlags(data.sheetLimited, data.pidFault);
             document.getElementById('currentAuxTemperature').textContent = auxTemperature !== null ? auxTemperature.toFixed(2) : 'N/A';
 
             if (data) {
@@ -811,8 +834,75 @@ function resetSystem() {
                 return;
             }
             fetch('/pid/params?kp=' + kp + '&ki=' + ki + '&kd=' + kd).then(response => response.text()).then(data => {
-                alert('PID parameters updated');
+                alert('PID parameters updated for the ' + (controlSensor === 'aux' ? 'AUX Temp Sensor' : 'PID Temp Sensor') + ' (current control sensor)');
             }).catch(error => alert('Error: ' + error.message));
+        }
+
+        // ---- Control sensor (which thermistor the PID controls) ----
+        let controlSensor = (document.querySelector('input[name="ctlSensor"]:checked') || { value: 'pid' }).value;
+
+        function showControlSensor(sensor) {
+            controlSensor = sensor;
+            document.querySelectorAll('input[name="ctlSensor"]').forEach(r => r.checked = (r.value === sensor));
+            document.getElementById('controlTempLabel').textContent = sensor === 'aux' ? 'AUX Temp Sensor (controlled)' : 'PID Temp Sensor (controlled)';
+        }
+
+        function showGains(kp, ki, kd) {
+            document.getElementById('kpInput').value = Number(kp).toFixed(3);
+            document.getElementById('kiInput').value = Number(ki).toFixed(4);
+            document.getElementById('kdInput').value = Number(kd).toFixed(3);
+        }
+
+        function showPidFlags(sheetLimited, pidFault) {
+            document.getElementById('sheetLimitedFlag').style.display = (sheetLimited && controlSensor === 'aux') ? 'block' : 'none';
+            const f = document.getElementById('pidFaultFlag');
+            f.textContent = pidFault ? 'PID stopped itself: ' + pidFault : '';
+            f.style.display = pidFault ? 'block' : 'none';
+        }
+
+        function setControlSensor(sensor) {
+            if (pidEnabled) {
+                const target = document.getElementById('targetTempInput').value;
+                const name = sensor === 'aux' ? 'AUX Temp Sensor (sample)' : 'PID Temp Sensor (sheet)';
+                if (!confirm('The PID is running. The setpoint (' + target + ' °C) will now be held on the ' + name +
+                             ', with that sensor\'s gains. Switch?')) {
+                    showControlSensor(controlSensor);  // Put the radio buttons back
+                    return;
+                }
+            }
+            fetch('/pid/sensor?s=' + sensor).then(r => {
+                if (!r.ok) return r.text().then(t => { throw new Error(t); });
+                return r.json();
+            }).then(d => {
+                showControlSensor(d.control);
+                showGains(d.kp, d.ki, d.kd);
+                document.getElementById('sheetLimitInput').value = d.sheetLimit;
+                logDebug('PID now controls on ' + (d.control === 'aux' ? 'AUX Temp Sensor' : 'PID Temp Sensor') + ' with Kp ' + d.kp + ', Ki ' + d.ki + ', Kd ' + d.kd);
+            }).catch(e => { alert('Error changing control sensor: ' + e.message); showControlSensor(controlSensor === 'aux' ? 'pid' : 'aux'); });
+        }
+
+        function setSheetLimit() {
+            const limit = parseFloat(document.getElementById('sheetLimitInput').value);
+            fetch('/pid/sensor?limit=' + limit).then(r => {
+                if (!r.ok) return r.text().then(t => { throw new Error(t); });
+                return r.json();
+            }).then(d => alert('Sheet limit set to ' + d.sheetLimit + ' °C'))
+              .catch(e => alert('Error: ' + e.message));
+        }
+
+        function savePidDefaults() {
+            fetch('/pid/save').then(r => r.text().then(t => { if (!r.ok) throw new Error(t); return t; }))
+                .then(t => alert(t)).catch(e => alert('Error saving: ' + e.message));
+        }
+
+        // Every 5 s: control sensor (it can also be changed from /tune), gains,
+        // sheet-limit and PID-fault flags
+        function refreshPidState() {
+            fetch('/heater/status').then(r => r.json()).then(d => {
+                if (d.control && d.control !== controlSensor) { showControlSensor(d.control); showGains(d.pidKp, d.pidKi, d.pidKd); }
+                showPidFlags(d.sheetLimited, d.pidFault);
+                updateHeaterStatus(d.heaterState, d.targetTemp, d.pidEnabled, d.pidEnabled ? d.pidOutput : d.heaterDutyCycle);
+            }).catch(() => {});
         }
 
         function listLogFiles() {
@@ -897,6 +987,9 @@ function resetSystem() {
             setInterval(updateHeaterRuntime, 1000);
             updateLoggingStatusUI(); // Ensure buttons are correct on load
             describeAveraging();
+            showControlSensor(controlSensor);
+            refreshPidState();
+            setInterval(refreshPidState, 5000);
             listLogFiles();
             logDebug('Initialization complete');
         };

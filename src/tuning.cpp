@@ -12,7 +12,7 @@
 const uint16_t TUNE_MAX_SAMPLES = 600;            // 600 x 8 bytes = 4.8 KB of RAM
 const float TUNE_MAX_TEMP = 120.0;                // Stop if the sheet (PID Temp Sensor) exceeds this
                                                   // (MAX_SAFE_TEMPERATURE 130 is the emergency limit)
-const unsigned long TUNE_MAX_TOTAL_MS = 25UL * 60UL * 1000UL;  // 25 min, under the 30 min heater limit
+const unsigned long TUNE_MAX_TOTAL_MS = 55UL * 60UL * 1000UL;  // 55 min, under the 1 h heater limit
 const uint8_t TUNE_MAX_SETPOINTS = 4;
 static const float TUNE_MAX_POWER = 80.0;         // Highest heater power a step test may use (%)
 static const unsigned long MIN_PHASE_MS = 120000; // Hold each step test phase at least 2 min
@@ -116,7 +116,12 @@ static void startRecording() {
   lastSampleMs = 0;
 }
 
-// Linear-regression slope of the PID Temp Sensor over the last 60 s, in °C/min.
+// Temperature of the sensor the PID controls, from a sample (FAULT if invalid)
+static int16_t controlledT(const TuneSample& s) {
+  return controlSensor == CONTROL_AUX_SENSOR ? s.auxT : s.pidT;
+}
+
+// Linear-regression slope of the controlled sensor over the last 60 s, in °C/min.
 // Returns NAN if there are too few samples.
 static float recentSlopeCPerMin() {
   if (sampleCount < 5) return NAN;
@@ -124,9 +129,10 @@ static float recentSlopeCPerMin() {
   double n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
   for (int i = sampleCount - 1; i >= 0; i--) {
     if ((unsigned long)(tEnd - samples[i].t) > SETTLE_WINDOW_DS) break;
-    if (samples[i].pidT == FAULT) continue;
+    int16_t v = controlledT(samples[i]);
+    if (v == FAULT) continue;
     double x = samples[i].t / 600.0;        // minutes
-    double y = samples[i].pidT / 100.0;
+    double y = v / 100.0;
     n++; sx += x; sy += y; sxx += x * x; sxy += x * y;
   }
   if (n < 5) return NAN;
@@ -163,7 +169,8 @@ void tuningLoop() {
     stopTuning(msg);
     return;
   }
-  if (now - testStartMs > TUNE_MAX_TOTAL_MS) { stopTuning("25 min test time limit"); return; }
+  if (controlSensor == CONTROL_AUX_SENSOR && (auxT == -999 || isnan(auxT))) { stopTuning("AUX Temp Sensor fault"); return; }
+  if (now - testStartMs > TUNE_MAX_TOTAL_MS) { stopTuning("55 min test time limit"); return; }
   if (tuneTest == TEST_STEP && (!heaterEnabled || pidEnabled)) { stopTuning("heater changed from the main page"); return; }
   if (tuneTest == TEST_SETPOINT && !pidEnabled) { stopTuning("PID turned off from the main page"); return; }
 
@@ -218,6 +225,16 @@ void tuningLoop() {
 // ---------------------------------------------------------------------------
 static bool validGain(float g) { return !isnan(g) && g >= 0 && g <= 100; }
 
+// /pid.json: {"control":"pid"|"aux","sheetLimit":120,
+//             "pid":{"kp":..,"ki":..,"kd":..},"aux":{"kp":..,"ki":..,"kd":..}}
+// The older format {"kp":..,"ki":..,"kd":..} is read as the PID-sensor gains.
+static bool readGainSet(JsonVariantConst set, int sensor) {
+  float kp = set["kp"] | NAN, ki = set["ki"] | NAN, kd = set["kd"] | NAN;
+  if (!validGain(kp) || !validGain(ki) || !validGain(kd)) return false;
+  sensorGains[sensor][0] = kp; sensorGains[sensor][1] = ki; sensorGains[sensor][2] = kd;
+  return true;
+}
+
 void loadSavedPidGains() {
   File f = LittleFS.open(PID_GAINS_FILE, "r");
   if (!f) {
@@ -227,25 +244,52 @@ void loadSavedPidGains() {
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-  float kp = doc["kp"] | NAN, ki = doc["ki"] | NAN, kd = doc["kd"] | NAN;
-  if (err || !validGain(kp) || !validGain(ki) || !validGain(kd)) {
+  if (err) {
     Serial.println(F("PID gains: /pid.json unreadable, using firmware defaults"));
     return;
   }
-  pidKp = kp; pidKi = ki; pidKd = kd;
-  Serial.print(F("PID gains loaded from /pid.json: Kp=")); Serial.print(pidKp, 3);
+  bool any = false;
+  if (doc["pid"].is<JsonObjectConst>()) {
+    any |= readGainSet(doc["pid"], CONTROL_PID_SENSOR);
+    any |= readGainSet(doc["aux"], CONTROL_AUX_SENSOR);
+  } else {
+    any |= readGainSet(doc.as<JsonVariantConst>(), CONTROL_PID_SENSOR);  // older format
+  }
+  float limit = doc["sheetLimit"] | NAN;
+  if (!isnan(limit) && limit >= MIN_SHEET_LIMIT && limit <= MAX_SHEET_LIMIT) sheetLimit = limit;
+  const char* control = doc["control"] | "pid";
+  controlSensor = strcmp(control, "aux") == 0 ? CONTROL_AUX_SENSOR : CONTROL_PID_SENSOR;
+  pidKp = sensorGains[controlSensor][0];
+  pidKi = sensorGains[controlSensor][1];
+  pidKd = sensorGains[controlSensor][2];
+  Serial.print(any ? F("PID settings loaded from /pid.json: control=") : F("PID gains: none valid in /pid.json; control="));
+  Serial.print(controlSensorName(controlSensor));
+  Serial.print(F(", Kp=")); Serial.print(pidKp, 3);
   Serial.print(F(", Ki=")); Serial.print(pidKi, 4);
-  Serial.print(F(", Kd=")); Serial.println(pidKd, 3);
+  Serial.print(F(", Kd=")); Serial.print(pidKd, 3);
+  Serial.print(F(", sheet limit=")); Serial.println(sheetLimit, 1);
 }
 
+// /pid/save: store both sensors' gains, the control sensor and the sheet limit
 static void handlePidSave() {
+  rememberActiveGains();
   File f = LittleFS.open(PID_GAINS_FILE, "w");
   if (!f) { sendText(500, F("Could not write /pid.json")); return; }
   JsonDocument doc;
-  doc["kp"] = pidKp; doc["ki"] = pidKi; doc["kd"] = pidKd;
+  doc["control"] = controlSensorName(controlSensor);
+  doc["sheetLimit"] = sheetLimit;
+  const char* names[2] = {"pid", "aux"};
+  for (int s = 0; s < 2; s++) {
+    JsonObject set = doc[names[s]].to<JsonObject>();
+    set["kp"] = sensorGains[s][0]; set["ki"] = sensorGains[s][1]; set["kd"] = sensorGains[s][2];
+  }
   serializeJson(doc, f);
   f.close();
-  String msg = "Saved as boot defaults: Kp=" + String(pidKp, 3) + ", Ki=" + String(pidKi, 4) + ", Kd=" + String(pidKd, 3);
+  String msg = String(F("Saved as boot defaults: controlling on ")) +
+               (controlSensor == CONTROL_AUX_SENSOR ? "AUX" : "PID sensor") +
+               ", PID sensor gains " + String(sensorGains[0][0], 3) + " / " + String(sensorGains[0][1], 4) + " / " + String(sensorGains[0][2], 3) +
+               ", AUX gains " + String(sensorGains[1][0], 3) + " / " + String(sensorGains[1][1], 4) + " / " + String(sensorGains[1][2], 3) +
+               ", sheet limit " + String(sheetLimit, 1) + " C";
   Serial.println(msg);
   sendText(200, msg);
 }
@@ -266,7 +310,7 @@ static bool refuseStart() {
   return false;
 }
 
-// /tune/step?p1=20&p2=30&max=8  (powers in %, max minutes per phase 3-12)
+// /tune/step?p1=20&p2=30&max=8  (powers in %, max minutes per phase 3-20)
 static void handleTuneStep() {
   if (refuseStart()) return;
   if (!server.hasArg("p1") || !server.hasArg("p2")) { sendText(400, F("Missing p1 or p2")); return; }
@@ -276,7 +320,7 @@ static void handleTuneStep() {
     sendText(400, String(F("Powers must be 0-")) + String((int)TUNE_MAX_POWER) + " % and differ by at least 2 %");
     return;
   }
-  if (maxMin < 3 || maxMin > 12) { sendText(400, F("max must be 3-12 minutes")); return; }
+  if (maxMin < 3 || maxMin > 20) { sendText(400, F("max must be 3-20 minutes")); return; }
 
   stepPower1 = p1; stepPower2 = p2;
   maxPhaseMs = (unsigned long)(maxMin * 60000UL);
@@ -316,8 +360,8 @@ static void handleTuneSetpoint() {
   }
   if (n == 0) { sendText(400, F("No setpoints given")); return; }
   float holdMin = server.hasArg("hold") ? server.arg("hold").toFloat() : 5;
-  if (holdMin < 1 || holdMin > 10 || holdMin * n > 24) {
-    sendText(400, F("hold must be 1-10 min, and setpoints x hold at most 24 min"));
+  if (holdMin < 1 || holdMin > 15 || holdMin * n > 54) {
+    sendText(400, F("hold must be 1-15 min, and setpoints x hold at most 54 min"));
     return;
   }
   float kp = server.hasArg("kp") ? server.arg("kp").toFloat() : pidKp;
@@ -326,6 +370,7 @@ static void handleTuneSetpoint() {
   if (!validGain(kp) || !validGain(ki) || !validGain(kd)) { sendText(400, F("Gains must be 0-100")); return; }
 
   pidKp = kp; pidKi = ki; pidKd = kd;
+  rememberActiveGains();   // These become the gains of the selected control sensor
   spCount = n; spIndex = 0;
   holdMs = (unsigned long)(holdMin * 60000UL);
   for (uint8_t i = 0; i < 4; i++) spStartDs[i] = -1;
@@ -380,6 +425,9 @@ static void handleTuneStatus() {
   doc["pidEnabled"] = pidEnabled;
   doc["target"] = targetTemperature;
   doc["kp"] = pidKp; doc["ki"] = pidKi; doc["kd"] = pidKd;
+  doc["control"] = controlSensorName(controlSensor);
+  doc["sheetLimit"] = sheetLimit;
+  doc["sheetLimited"] = sheetLimited;
   doc["maxTemp"] = TUNE_MAX_TEMP;
   doc["emergency"] = (bool)emergencyShutdown;
   if (tuneTest == TEST_STEP) {

@@ -31,6 +31,7 @@ void setupWebServer() {
   server.on("/pid/enable", handlePIDEnable);
   server.on("/pid/disable", handlePIDDisable);
   server.on("/pid/params", handlePIDParams);
+  server.on("/pid/sensor", handlePIDSensor);
   server.on("/heater/status", handleHeaterStatus);
 
   // SD card routes
@@ -72,6 +73,7 @@ void sendWebUpdate() {
       static float lastSentDuty = -1;
       static float lastSentTarget = -999;
       static bool lastSentPidEnabled = false;
+      static uint8_t lastSentControl = 255;
       static unsigned long lastSentMs = 0;
       float currentTemp = readings[idx].temperature;
       float currentAuxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
@@ -87,6 +89,7 @@ void sendWebUpdate() {
           abs(readings[idx].pidValue - lastSentDuty) < 1.0 &&
           readings[idx].targetTemp == lastSentTarget &&
           readings[idx].pidEnabled == lastSentPidEnabled &&
+          readings[idx].control == lastSentControl &&
           millis() - lastSentMs < 5000) {
         return;  // Skip this update - no significant change
       }
@@ -98,10 +101,11 @@ void sendWebUpdate() {
       lastSentDuty = readings[idx].pidValue;
       lastSentTarget = readings[idx].targetTemp;
       lastSentPidEnabled = readings[idx].pidEnabled;
+      lastSentControl = readings[idx].control;
       lastSentMs = millis();
       
       // Use static document to avoid heap fragmentation
-      static StaticJsonDocument<256> doc;
+      static StaticJsonDocument<320> doc;
       doc.clear();
       
       doc["timestamp"] = readings[idx].timestamp;
@@ -113,9 +117,11 @@ void sendWebUpdate() {
       doc["targetTemp"] = readings[idx].targetTemp;
       doc["pidOutput"] = readings[idx].pidValue;           // Heater PWM duty when sampled
       doc["pidEnabled"] = readings[idx].pidEnabled;
+      doc["ctl"] = readings[idx].control;                   // 0 = PID sensor controls, 1 = AUX
+      if (sheetLimited) doc["sheetLimited"] = true;
       doc["loggingEnabled"] = dataLoggingEnabled;
       
-      char jsonBuffer[256];
+      char jsonBuffer[320];
       serializeJson(doc, jsonBuffer, sizeof(jsonBuffer));
       webSocket.broadcastTXT(jsonBuffer);
       
@@ -197,6 +203,12 @@ void sendTemplatedPage(const char* filename) {
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
         line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 sample cycles per second)" : "Click 'Start Logging' to begin data collection");
         line.replace("{{AVG_CHECKED_ATTR}}", averagingEnabled ? "checked" : "");
+        line.replace("{{CTL_PID_CHECKED}}", controlSensor == CONTROL_PID_SENSOR ? "checked" : "");
+        line.replace("{{CTL_AUX_CHECKED}}", controlSensor == CONTROL_AUX_SENSOR ? "checked" : "");
+        line.replace("{{SHEET_LIMIT_INITIAL}}", String(sheetLimit, 0));
+        line.replace("{{SHEET_LIMIT_MIN}}", String(MIN_SHEET_LIMIT, 0));
+        line.replace("{{SHEET_LIMIT_MAX}}", String(MAX_SHEET_LIMIT, 0));
+        line.replace("{{SAFETY_TIMEOUT_MIN}}", String(MAX_HEATER_TIME / 60000UL));
         line.replace("{{AVG_SAMPLES_INITIAL}}", String(averageSamples));
         line.replace("{{AVG_SAMPLES_MIN}}", String(MIN_AVERAGE_SAMPLES));
         line.replace("{{AVG_SAMPLES_MAX}}", String(MAX_AVERAGE_SAMPLES));
@@ -318,6 +330,11 @@ void handleStatus() {
   doc["pidKp"] = pidKp;
   doc["pidKi"] = pidKi;
   doc["pidKd"] = pidKd;
+  doc["control"] = controlSensorName(controlSensor);
+  doc["sheetLimit"] = sheetLimit;
+  doc["sheetLimited"] = sheetLimited;
+  doc["pidFault"] = pidFaultMessage;
+  doc["maxHeaterMinutes"] = MAX_HEATER_TIME / 60000UL;
   doc["averagingEnabled"] = averagingEnabled;
   doc["averageSamples"] = averageSamples;
   String jsonString;
@@ -471,11 +488,50 @@ void handlePIDParams() {
     Serial.print(pidKi);
     Serial.print(", Kd=");
     Serial.println(pidKd);
+    rememberActiveGains();  // These are now the selected control sensor's gains
     resetPIDState();
     server.send(200, "text/plain", "PID parameters updated");
   } else {
     server.send(400, "text/plain", "No parameters provided");
   }
+}
+
+// /pid/sensor?s=pid|aux[&limit=120]
+// Selects the sensor the PID controls, and the sheet limit used while it
+// controls on AUX. Each sensor keeps its own gains; the response has the gains
+// now in use so the page can show them.
+void handlePIDSensor() {
+  bool changeSensor = server.hasArg("s");
+  ControlSensor wanted = controlSensor;
+  if (changeSensor) {
+    String s = server.arg("s");
+    if (s == "aux") wanted = CONTROL_AUX_SENSOR;
+    else if (s == "pid") wanted = CONTROL_PID_SENSOR;
+    else { server.send(400, "text/plain", "s must be pid or aux"); return; }
+  }
+  if (server.hasArg("limit")) {
+    float limit = server.arg("limit").toFloat();
+    if (limit < MIN_SHEET_LIMIT || limit > MAX_SHEET_LIMIT) {
+      server.send(400, "text/plain", "Sheet limit must be " + String(MIN_SHEET_LIMIT, 0) + "-" + String(MAX_SHEET_LIMIT, 0) + " C");
+      return;
+    }
+    sheetLimit = limit;
+  }
+  if (changeSensor && wanted != controlSensor) {
+    stopTuning("control sensor changed");
+    // kp/ki/kd are written from the current gains when the buffer is saved:
+    // save the rows sampled under the old sensor's gains first
+    flushDataBuffer();
+    setControlSensor(wanted);
+  }
+  JsonDocument doc;
+  doc["control"] = controlSensorName(controlSensor);
+  doc["sheetLimit"] = sheetLimit;
+  doc["kp"] = pidKp; doc["ki"] = pidKi; doc["kd"] = pidKd;
+  doc["pidEnabled"] = pidEnabled;
+  String out;
+  serializeJson(doc, out);
+  server.send(200, "application/json", out);
 }
 
 void handleHeaterStatus() {
@@ -490,6 +546,10 @@ void handleHeaterStatus() {
   doc["pidKp"] = pidKp;
   doc["pidKi"] = pidKi;
   doc["pidKd"] = pidKd;
+  doc["control"] = controlSensorName(controlSensor);
+  doc["sheetLimit"] = sheetLimit;
+  doc["sheetLimited"] = sheetLimited;
+  doc["pidFault"] = pidFaultMessage;
   doc["heaterRuntime"] = (heaterDutyCycle > 0) ? (millis() - heaterStartTime) / 1000 : 0;
   String jsonString;
   serializeJson(doc, jsonString);

@@ -39,8 +39,10 @@
 //
 // Channels
 //   VOLTAGE_CHANNEL        = 0   voltage = ADC / 1024 (0-1 V scale)
-//   THERMISTOR_CHANNEL     = 1   PID Temp Sensor (PID + safety checks)
-//   AUX_THERMISTOR_CHANNEL = 2   AUX Temp Sensor (logged/displayed only)
+//   THERMISTOR_CHANNEL     = 1   PID Temp Sensor (sheet: default control
+//                                sensor, safety checks, sheet limit)
+//   AUX_THERMISTOR_CHANNEL = 2   AUX Temp Sensor (sample: selectable as the
+//                                control sensor)
 //
 // Measurement circuit (both thermistor channels)
 //   THERMISTOR_SUPPLY_VOLTAGE = 3.32     V, measured rail feeding both dividers
@@ -96,13 +98,14 @@
 //   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
 //   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output,
 //                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-//                   aux_temp,aux_adc,aux_v,samples
-//                   (CSV_HEADER in data_manager.cpp; ~93 bytes per raw row)
+//                   aux_temp,aux_adc,aux_v,samples,control
+//                   (CSV_HEADER in data_manager.cpp; ~95 bytes per raw row)
 //     temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
 //     aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
 //     *_adc        = raw ADC counts (0-1023), or mean counts (2 decimals)
 //                    when averaged
 //     samples      = sample cycles in the row: 1 = raw, N = averaged
+//     control      = sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX
 //     *_v          = adc / 1024 * 3.2 * ADC_CALIBRATION_GAIN, the A0 voltage
 //                    each temperature is calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
@@ -137,9 +140,15 @@
 //   PWM_RANGE            = 1000 (0.1% resolution)
 //
 //   targetTemperature    = 45.0 C default (settable 0 - MAX_SAFE_TEMPERATURE)
-//   pidKp                = 2.3    interim defaults from a model of the sheet;
-//   pidKi                = 0.045  gains saved from the /tune page (/pid.json
-//   pidKd                = 0.0    on LittleFS) replace them at boot
+//   controlSensor        = CONTROL_PID_SENSOR (or CONTROL_AUX_SENSOR),
+//                          switchable at runtime: /pid/sensor?s=pid|aux
+//   sensorGains          = PID sensor 2.3 / 0.045 / 0, AUX 1.0 / 0.008 / 0
+//                          (Kp / Ki / Kd; interim, from a model). The active
+//                          sensor's gains are pidKp / pidKi / pidKd.
+//   sheetLimit           = 120 C (40-125) while controlling on AUX; power
+//                          tapers to 0 over SHEET_LIMIT_BAND = 5 C below it
+//   Saved settings       = /pid.json on LittleFS (both gain sets, control
+//                          sensor, sheet limit), loaded at boot
 //   PID_INTERVAL         = 500 ms
 //   Anti-windup          = integral term limited to +/-100 % output and not
 //                          integrated while the output is saturated
@@ -148,12 +157,12 @@
 //   PID tuning (src/tuning.cpp, /tune page)
 //   TUNE_MAX_SAMPLES     = 600 x 8 bytes, 1 s (halves resolution when full)
 //   TUNE_MAX_TEMP        = 120 C   test stops (heater off) above this
-//   TUNE_MAX_TOTAL_MS    = 25 min  test stops after this
+//   TUNE_MAX_TOTAL_MS    = 55 min  test stops after this (under the 1 h limit)
 //   Step test settling   = >= 2 min and |trend| < 0.15 C/min over 60 s
 //   Output               = 0-100% -> PWM duty
 //
 //   MAX_SAFE_TEMPERATURE = 130.0 C        Over-temp emergency shutdown
-//   MAX_HEATER_TIME      = 1800000 ms     30 min continuous heating limit
+//   MAX_HEATER_TIME      = 3600000 ms     1 h continuous heating limit (was 30 min)
 //
 //   The over-temp and sensor-fault checks use the latest logged reading, so
 //   they only run while logging is on. The PID itself reads the sensor

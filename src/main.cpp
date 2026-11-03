@@ -134,7 +134,7 @@ void setup() {
   Serial.println("   PWM pin: GPIO16 (D0) - 32 Hz");
   Serial.println("   MOSFET: AOD4144 N-channel");
   Serial.println("   PID control with smooth 0-100% power regulation");
-  Serial.println("   Safety timeout: 1hr continuous operation");
+  Serial.print(F("   Safety timeout: ")); Serial.print(MAX_HEATER_TIME / 60000UL); Serial.println(F(" min continuous heating"));
   Serial.println("     HARDWARE SAFETY SYSTEM ACTIVE");
   Serial.println("     Independent timer-based monitoring");
   Serial.println("     Watchdog protection enabled");
@@ -231,7 +231,8 @@ void readSensors() {
     lastTargetTemp = targetTemperature;
     currentSensorChannel = AUX_THERMISTOR_CHANNEL;
   } else {
-    // AUX Temp Sensor (logged only, not used by the PID). Completes the row.
+    // AUX Temp Sensor (the PID uses it only when it is the selected control
+    // sensor). Completes the sample cycle.
     selectMuxChannel(AUX_THERMISTOR_CHANNEL);
     delayMicroseconds(50);
     int adcValue = analogRead(ADC_PIN);
@@ -247,6 +248,7 @@ void readSensors() {
     cycle.pidValue = lastDutyCycle;       // Actual PWM duty cycle percentage
     cycle.targetTemp = lastTargetTemp;
     cycle.samples = 1;
+    cycle.control = controlSensor;        // Sensor the PID controls (0 = PID, 1 = AUX)
     #if DEBUG_ADC
     static unsigned long cycleCount = 0;
     if (++cycleCount % 500 == 0) {
