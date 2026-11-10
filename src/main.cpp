@@ -14,6 +14,7 @@
 #include "web_interface.h"
 #include "safety_system.h"
 #include "tuning.h"
+#include "program.h"
 
 // Fallback definition for A0 if not defined (for IDE/linter support)
 #ifndef A0
@@ -147,6 +148,7 @@ void loop() {
 
   if (emergencyShutdown) {
     stopTuning("emergency shutdown");  // No-op unless a tuning test is running
+    stopProgram("emergency shutdown"); // No-op unless a setpoint program is running
     emergencyShutdownSystem();
     return;
   }
@@ -167,6 +169,9 @@ void loop() {
   
   // PID tuning tests (/tune page): sample and advance, if one is running
   tuningLoop();
+
+  // Setpoint program (/program page): advance the steps, if one is running
+  programLoop();
 
   // PID control runs independently of data logging
   if (pidEnabled && millis() - lastPIDUpdate >= PID_INTERVAL) {
@@ -249,6 +254,7 @@ void readSensors() {
     cycle.targetTemp = lastTargetTemp;
     cycle.samples = 1;
     cycle.control = controlSensor;        // Sensor the PID controls (0 = PID, 1 = AUX)
+    cycle.step = programStepNumber();     // Setpoint program step (0 = none)
     #if DEBUG_ADC
     static unsigned long cycleCount = 0;
     if (++cycleCount % 500 == 0) {

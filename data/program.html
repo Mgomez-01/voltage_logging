@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setpoint Program</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#1d2329; --muted:#5f6b76; --line:#d8dee4;
+          --pid:#c0392b; --aux:#e67e22; --duty:#2471a3; --sp:#1e8449; --accent:#2471a3; --cur:#fff6d6; --done:#eef7f0; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { background:#22313f; color:#fff; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  header h1 { font-size:20px; margin:0; }
+  header nav a { color:#cfe3f5; margin-left:14px; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .card h2 { font-size:17px; margin:0 0 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:flex-end; }
+  label { font-size:13px; color:var(--muted); display:flex; flex-direction:column; gap:3px; }
+  label.inline { flex-direction:row; align-items:center; gap:6px; color:var(--text); font-size:14px; }
+  input, select, textarea { font-size:15px; padding:6px 8px; border:1px solid var(--line); border-radius:5px; font-family:inherit; }
+  input[type=number] { width:90px; }
+  input[type=checkbox] { width:auto; }
+  textarea { width:100%; min-height:180px; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:14px; }
+  button { font-size:15px; padding:8px 14px; border:0; border-radius:5px; background:var(--accent); color:#fff; cursor:pointer; }
+  button.go { background:#1e8449; }
+  button.stop { background:#c0392b; }
+  button.secondary { background:#5f6b76; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .status { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap:8px; }
+  .stat { background:var(--bg); border-radius:6px; padding:8px 10px; }
+  .stat .k { font-size:12px; color:var(--muted); }
+  .stat .v { font-size:18px; font-weight:600; }
+  #message { margin-top:10px; padding:8px 10px; border-radius:6px; background:#eef4fa; font-size:14px; }
+  #message.bad { background:#fdecea; } #message.good { background:#e9f7ef; }
+  .bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin-top:6px; }
+  .bar > div { height:100%; background:var(--accent); width:0; }
+  canvas { width:100%; height:340px; display:block; }
+  .legend { font-size:13px; color:var(--muted); display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  .legend span::before { content:""; display:inline-block; width:14px; height:3px; margin-right:5px; vertical-align:middle; background:currentColor; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  .grid2 > * { min-width:0; }
+  .scroll { overflow-x:auto; max-height:420px; overflow-y:auto; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; font-size:13px; position:sticky; top:0; background:var(--card); }
+  tr.cur td { background:var(--cur); font-weight:600; }
+  tr.done td { background:var(--done); color:var(--muted); }
+  .note { font-size:13px; color:var(--muted); margin:6px 0 0; line-height:1.45; }
+  .warn { color:#c0392b; }
+  @media (max-width:760px) { .grid2 { grid-template-columns: 1fr; } canvas { height:260px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Setpoint Program</h1>
+  <nav><a href="/">Logger</a><a href="/tune">PID tuning</a></nav>
+</header>
+<main>
+
+<div class="card">
+  <h2>Status</h2>
+  <div class="status">
+    <div class="stat"><div class="k">Program</div><div class="v" id="sState">-</div></div>
+    <div class="stat"><div class="k">Step</div><div class="v" id="sStep">-</div></div>
+    <div class="stat"><div class="k">Setpoint (<span id="sCtlShort">-</span>)</div><div class="v" id="sTarget">-</div></div>
+    <div class="stat"><div class="k">Sheet (PID sensor)</div><div class="v" id="sPid">-</div></div>
+    <div class="stat"><div class="k">Sample (AUX)</div><div class="v" id="sAux">-</div></div>
+    <div class="stat"><div class="k">Heater power</div><div class="v" id="sDuty">-</div></div>
+    <div class="stat"><div class="k">Step remaining</div><div class="v" id="sStepLeft">-</div></div>
+    <div class="stat"><div class="k">Program remaining</div><div class="v" id="sTotalLeft">-</div><div class="bar"><div id="progressBar"></div></div></div>
+  </div>
+  <div id="message">Connecting...</div>
+  <p class="note" id="settingsLine"></p>
+  <div class="row" style="margin-top:8px">
+    <button class="stop" id="stopBtn" onclick="stopProgram()">Stop program (heater off)</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Live plot <span class="note" style="font-weight:normal">(since this page was opened; the full record is in the SD log)</span></h2>
+  <canvas id="plot"></canvas>
+  <div class="legend">
+    <span style="color:var(--pid)">Sheet (PID sensor)</span>
+    <span style="color:var(--aux)">Sample (AUX)</span>
+    <span style="color:var(--sp)">Setpoint</span>
+    <span style="color:var(--duty)">Heater power (right axis)</span>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>Program</h2>
+    <p class="note">One step per line: a setpoint in &deg;C, optionally followed by its own hold time in minutes
+      (<code>62.5</code>, <code>62.5 15</code>, <code>62.5, 15</code> or <code>62.5:15</code>). Up to <span id="maxSteps">40</span> steps.
+      Each step holds for its time from when it starts, without waiting for the temperature to settle.
+      Setpoints apply to the selected control sensor (<span id="ctlName">-</span>, set on the <a href="/">main page</a>).</p>
+    <textarea id="steps" spellcheck="false" oninput="preview()"></textarea>
+    <div class="row" style="margin-top:8px">
+      <label>Default hold (min)<input id="hold" type="number" value="10" min="0.5" max="180" step="0.5" oninput="preview()"></label>
+      <label>When the last step ends
+        <select id="endAction">
+          <option value="off">Turn the heater off</option>
+          <option value="hold">Keep holding the last setpoint</option>
+        </select>
+      </label>
+      <label class="inline"><input type="checkbox" id="stopLog" checked> Stop logging when the steps end</label>
+    </div>
+    <details style="margin-top:10px">
+      <summary style="cursor:pointer;font-size:14px">Generate a list</summary>
+      <div class="row" style="margin-top:8px">
+        <label>From (&deg;C)<input id="gFrom" type="number" value="60" step="0.1"></label>
+        <label>To (&deg;C)<input id="gTo" type="number" value="70" step="0.1"></label>
+        <label>Step (&deg;C)<input id="gStep" type="number" value="0.5" step="0.1"></label>
+        <label class="inline"><input type="checkbox" id="gBack"> and back down</label>
+        <button class="secondary" onclick="generate()">Fill the list</button>
+      </div>
+      <p class="note">Uses the default hold for every step. Replaces the list above.</p>
+    </details>
+    <div class="row" style="margin-top:12px">
+      <button class="go" id="startBtn" onclick="startProgram()">Start program</button>
+      <button class="secondary" onclick="loadSaved()">Reload last program</button>
+    </div>
+    <p class="note">Start turns on logging (to the current log file, with the main page's averaging setting) and the PID,
+      then runs the steps on the board: the page can be closed. Logging, heater or PID changes on the main page stop the program.</p>
+  </div>
+
+  <div class="card">
+    <h2>Steps <span class="note" id="summary" style="font-weight:normal"></span></h2>
+    <div class="scroll"><table id="stepTable"></table></div>
+  </div>
+</div>
+
+</main>
+<script>
+"use strict";
+var st = null;            // last /program/status
+var hist = [];            // [t_s, pid, aux, target, duty]
+var MAX_STEPS = 40;
+var shownSteps = '';      // what the step table shows ('edit' or 'program')
+
+function $(id) { return document.getElementById(id); }
+function fmt(v, d) { return (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(d); }
+function hms(s) {
+  if (s === null || s === undefined || isNaN(s)) return '-';
+  s = Math.max(0, Math.round(s));
+  var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return (h ? h + ':' + ('0' + m).slice(-2) : m) + ':' + ('0' + sec).slice(-2);
+}
+function setMessage(text, kind) { var m = $('message'); m.textContent = text; m.className = kind || ''; }
+function call(url) {
+  return fetch(url).then(function (r) {
+    return r.text().then(function (t) { if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return t; });
+  });
+}
+
+// ---------------------------------------------------------------- list editing
+function parseSteps() {
+  var def = parseFloat($('hold').value), out = [], errors = [];
+  $('steps').value.split('\n').forEach(function (line, i) {
+    line = line.replace(/#.*/, '').trim();
+    if (!line) return;
+    var parts = line.split(/[\s,:;]+/).filter(function (p) { return p; });
+    var temp = parseFloat(parts[0]), hold = parts.length > 1 ? parseFloat(parts[1]) : def;
+    if (isNaN(temp)) { errors.push('line ' + (i + 1) + ': not a number'); return; }
+    if (temp < 20 || temp > 120) errors.push('line ' + (i + 1) + ': setpoint must be 20-120 °C');
+    if (isNaN(hold) || hold < 0.5 || hold > 180) errors.push('line ' + (i + 1) + ': hold must be 0.5-180 min');
+    out.push([temp, hold]);
+  });
+  if (out.length > MAX_STEPS) errors.push(out.length + ' steps: at most ' + MAX_STEPS);
+  return { steps: out, errors: errors };
+}
+
+function stepTable(steps, current, running) {
+  var html = '<tr><th>#</th><th>Setpoint</th><th>Hold</th><th>Starts at</th><th></th></tr>', t = 0;
+  steps.forEach(function (s, i) {
+    var cls = '', note = '';
+    if (current) {
+      if (i + 1 < current) { cls = 'done'; note = 'done'; }
+      else if (i + 1 === current) { cls = running ? 'cur' : ''; note = running ? 'running, ' + hms(st.stepRemaining) + ' left' : (st.state === 'holding' ? 'holding' : st.state); }
+    }
+    html += '<tr class="' + cls + '"><td>' + (i + 1) + '</td><td>' + fmt(s[0], 2) + ' &deg;C</td><td>' + fmt(s[1], 1) + ' min</td><td>' + hms(t * 60) + '</td><td>' + note + '</td></tr>';
+    t += s[1];
+  });
+  return { html: html, total: t };
+}
+
+function preview() {
+  if (st && st.active) return;   // While a program runs the table shows the program
+  var p = parseSteps(), tb = stepTable(p.steps, 0, false);
+  $('stepTable').innerHTML = tb.html;
+  var limit = st ? st.maxHeaterMinutes : 180;
+  var text = p.steps.length + ' steps, ' + hms(tb.total * 60) + ' total (limit ' + limit + ' min of continuous heating)';
+  if (tb.total > limit) p.errors.push('total ' + fmt(tb.total, 1) + ' min is over the ' + limit + ' min heater limit');
+  $('summary').innerHTML = p.errors.length ? '<span class="warn">' + p.errors.join('; ') + '</span>' : text;
+  shownSteps = 'edit';
+  return p.errors.length === 0 && p.steps.length > 0;
+}
+
+function generate() {
+  var a = parseFloat($('gFrom').value), b = parseFloat($('gTo').value), d = Math.abs(parseFloat($('gStep').value));
+  if (isNaN(a) || isNaN(b) || !d) { alert('Enter from, to and step'); return; }
+  var list = [], dir = b >= a ? 1 : -1, n = Math.floor(Math.abs(b - a) / d + 1e-6);
+  for (var i = 0; i <= n; i++) list.push(+(a + dir * i * d).toFixed(3));
+  if (list[list.length - 1] !== b && Math.abs(list[list.length - 1] - b) > 1e-6) list.push(b);
+  if ($('gBack').checked) list = list.concat(list.slice(0, -1).reverse());
+  if (list.length > MAX_STEPS) { alert(list.length + ' steps: at most ' + MAX_STEPS + '. Use a larger step.'); return; }
+  $('steps').value = list.join('\n');
+  preview();
+}
+
+function fillFrom(saved) {
+  if (!saved || !saved.steps) return;
+  $('hold').value = saved.hold;
+  $('endAction').value = saved.end === 'hold' ? 'hold' : 'off';
+  $('stopLog').checked = !!saved.stopLog;
+  $('steps').value = saved.steps.map(function (s) { return s[1] == saved.hold ? String(s[0]) : s[0] + ' ' + s[1]; }).join('\n');
+  preview();
+}
+function loadSaved() {
+  fetch('/program/saved').then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+    if (s && s.steps) fillFrom(s); else alert('No saved program on the board yet');
+  }).catch(function () { alert('Could not load the saved program'); });
+}
+
+// ---------------------------------------------------------------- actions
+function startProgram() {
+  if (!preview()) { alert('Fix the list first: ' + $('summary').textContent); return; }
+  var p = parseSteps();
+  var list = p.steps.map(function (s) { return s[0] + ':' + s[1]; }).join(',');
+  var ctl = st && st.control === 'aux' ? 'AUX Temp Sensor (sample)' : 'PID Temp Sensor (sheet)';
+  if (!confirm('Start ' + p.steps.length + ' steps controlling on the ' + ctl + '? Logging and the PID will be turned on.')) return;
+  var q = '/program/start?steps=' + encodeURIComponent(list) + '&hold=' + $('hold').value + '&end=' + $('endAction').value + '&stoplog=' + ($('stopLog').checked ? 1 : 0);
+  call(q).then(function (t) { setMessage(t, 'good'); hist = []; }).catch(function (e) { alert(e.message); });
+}
+function stopProgram() {
+  call('/program/stop').then(function (t) { setMessage(t, 'bad'); }).catch(function (e) { alert(e.message); });
+}
+
+// ---------------------------------------------------------------- status polling
+function poll() {
+  fetch('/program/status').then(function (r) { return r.json(); }).then(show)
+    .catch(function (e) { setMessage('Lost contact with the board: ' + e.message, 'bad'); })
+    .then(function () { setTimeout(poll, 2000); });
+}
+
+function show(s) {
+  var first = !st;
+  st = s;
+  var names = { idle: 'Idle', running: 'Running', holding: 'Holding last', done: 'Done', stopped: 'Stopped' };
+  $('sState').textContent = names[s.state] || s.state;
+  $('sStep').textContent = s.count ? (s.step + ' / ' + s.count) : '-';
+  $('sCtlShort').textContent = s.control === 'aux' ? 'AUX' : 'PID sensor';
+  $('ctlName').textContent = s.control === 'aux' ? 'AUX Temp Sensor, sample' : 'PID Temp Sensor, sheet';
+  $('sTarget').textContent = s.pidEnabled ? fmt(s.target, 2) + ' °C' : 'PID off';
+  $('sPid').textContent = s.pidTemp !== undefined ? fmt(s.pidTemp, 2) + ' °C' : 'N/A';
+  $('sAux').textContent = s.auxTemp !== undefined ? fmt(s.auxTemp, 2) + ' °C' : 'N/A';
+  $('sDuty').textContent = fmt(s.duty, 1) + ' %' + (s.sheetLimited ? ' (sheet limit)' : '');
+  $('sStepLeft').textContent = s.running ? hms(s.stepRemaining) : '-';
+  $('sTotalLeft').textContent = s.running ? hms(s.totalRemaining) : '-';
+  $('progressBar').style.width = s.count && s.totalTime ? (100 * (s.running ? 1 - s.totalRemaining / s.totalTime : (s.state === 'done' || s.state === 'holding' ? 1 : 0))) + '%' : '0';
+  setMessage(s.message + (s.emergency ? ' (EMERGENCY SHUTDOWN ACTIVE: reset from the main page)' : ''),
+             s.state === 'stopped' || s.emergency ? 'bad' : (s.state === 'done' || s.state === 'holding' ? 'good' : ''));
+  $('settingsLine').innerHTML = 'Logging: <b>' + (s.logging ? 'ON' : 'off') + '</b>' + (s.logFile ? ' to ' + s.logFile : ' (no log file: check the SD card)') +
+    ', averaging ' + (s.averaging ? '<b>ON</b>, ' + s.averageSamples + ' cycles per row' : '<b>off</b> (raw rows)') +
+    ' &middot; Control: <b>' + (s.control === 'aux' ? 'AUX Temp Sensor' : 'PID Temp Sensor') + '</b>, Kp ' + fmt(s.kp, 3) + ' / Ki ' + fmt(s.ki, 4) + ' / Kd ' + fmt(s.kd, 3) +
+    (s.control === 'aux' ? ', sheet limit ' + fmt(s.sheetLimit, 0) + ' °C' : '') +
+    ' &middot; Heater limit ' + s.maxHeaterMinutes + ' min' + (s.heaterRuntime ? ' (on for ' + hms(s.heaterRuntime) + ')' : '') +
+    ' &middot; Change logging and control settings on the <a href="/">main page</a>.';
+  $('stopBtn').disabled = !s.active;
+  $('startBtn').disabled = s.active || s.emergency || s.tuning || !s.logFile;
+  $('startBtn').title = s.tuning ? 'A PID tuning test is running' : (!s.logFile ? 'No log file: check the SD card' : '');
+
+  if (s.active) {
+    // A program is running: the table tracks its progress
+    var tb = stepTable(s.steps || [], s.step, s.running);
+    $('stepTable').innerHTML = tb.html;
+    $('summary').textContent = s.count + ' steps, ' + hms(s.totalTime) + ' total';
+    shownSteps = 'program';
+  } else if (shownSteps !== 'edit') {
+    preview();   // Back to previewing the list being edited
+  }
+
+  // live history
+  hist.push([s.timestamp / 1000, s.pidTemp !== undefined ? s.pidTemp : null, s.auxTemp !== undefined ? s.auxTemp : null, s.pidEnabled ? s.target : null, s.duty]);
+  if (hist.length > 6000) hist.shift();
+  redraw();
+
+  if (first) {
+    if (s.active && s.steps) fillFrom({ steps: s.steps, hold: (s.steps[0] || [0, 10])[1], end: s.endAction, stopLog: s.stopLog });
+    else fetch('/program/saved').then(function (r) { return r.ok ? r.json() : null; }).then(function (sv) { if (sv && sv.steps && !$('steps').value) fillFrom(sv); }).catch(function () {});
+  }
+}
+
+// ---------------------------------------------------------------- plot
+function niceStep(raw) { var p = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 1e-9)))), m = raw / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p; }
+function redraw() {
+  var c = $('plot'), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  var g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.font = '12px system-ui, sans-serif';
+  var L = 48, R = 44, T = 10, B = 28, pw = w - L - R, ph = h - T - B;
+  if (hist.length < 2) { g.fillStyle = '#888'; g.fillText('Collecting readings...', L + 10, T + 24); return; }
+  var t0 = hist[0][0], tEnd = hist[hist.length - 1][0], span = Math.max(30, tEnd - t0);
+  var lo = Infinity, hi = -Infinity, dMax = 10;
+  hist.forEach(function (p) { [p[1], p[2], p[3]].forEach(function (v) { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }); dMax = Math.max(dMax, p[4] || 0); });
+  if (hi - lo < 4) { var mid = (hi + lo) / 2; lo = mid - 2; hi = mid + 2; }
+  var pad = (hi - lo) * 0.08; lo -= pad; hi += pad; dMax = Math.ceil(dMax / 10) * 10;
+  var X = function (t) { return L + pw * (t - t0) / span; }, Y = function (v) { return T + ph * (1 - (v - lo) / (hi - lo)); }, YD = function (d) { return T + ph * (1 - d / dMax); };
+  g.strokeStyle = '#e3e6ea'; g.fillStyle = '#666'; g.lineWidth = 1;
+  var step = niceStep((hi - lo) / 6);
+  for (var v = Math.ceil(lo / step) * step; v <= hi; v += step) { g.beginPath(); g.moveTo(L, Y(v)); g.lineTo(L + pw, Y(v)); g.stroke(); g.fillText(v.toFixed(step < 1 ? 1 : 0), 4, Y(v) + 4); }
+  var tStep = [10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200].find(function (s) { return s >= span / 7; }) || 7200;
+  for (var t = 0; t <= span; t += tStep) { g.beginPath(); g.moveTo(X(t0 + t), T); g.lineTo(X(t0 + t), T + ph); g.stroke(); g.fillText(tStep >= 60 ? (t / 60) + ' min' : t + ' s', X(t0 + t) - 10, h - 10); }
+  for (var d = 0; d <= dMax; d += dMax / 5) g.fillText(d.toFixed(0) + '%', L + pw + 6, YD(d) + 4);
+  g.fillText('°C', L + 4, T + 12);
+  line(g, 4, X, YD, '#2471a3', [3, 3]);
+  line(g, 3, X, Y, '#1e8449', [6, 4]);
+  line(g, 2, X, Y, '#e67e22');
+  line(g, 1, X, Y, '#c0392b');
+}
+function line(g, i, X, Y, color, dash) {
+  g.strokeStyle = color; g.lineWidth = 2; g.setLineDash(dash || []); g.beginPath(); var on = false;
+  hist.forEach(function (p) { if (p[i] === null) { on = false; return; } if (!on) { g.moveTo(X(p[0]), Y(p[i])); on = true; } else g.lineTo(X(p[0]), Y(p[i])); });
+  g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+}
+
+window.addEventListener('resize', redraw);
+$('maxSteps').textContent = MAX_STEPS;
+preview();
+poll();
+</script>
+</body>
+</html>

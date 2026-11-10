@@ -11,6 +11,7 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 - **PID temperature control**: runs every 500 ms, independent of data logging
 - **Real-time web interface**: WebSocket updates, a live plot and statistics. The plot is drawn by the page itself (no internet needed): PID and AUX temperatures, the setpoint while the PID is on, and heater power or voltage on the right axis, over a 2 min to 60 min window, downloadable as CSV
 - **PID tuning page** (`/tune`): power step and setpoint tests with suggested gains (see Heater / PID)
+- **Setpoint program page** (`/program`): run an experiment through a list of up to 40 setpoints, each held for a set time, with logging on (see Setpoint program)
 - **WiFi access point**: no router needed
 - **Safety system**: over-temperature, sensor-fault and max-runtime shutdown, software and hardware watchdogs, SD write timeouts, low-memory guard, and a web "System Reset" to recover
 
@@ -121,7 +122,7 @@ make deploy ENV=wemos_d1_mini # same for a Wemos D1 mini
 Or step by step:
 ```bash
 pio run -e esp8266 -t upload       # firmware (use -e wemos_d1_mini for a D1 mini)
-pio run -e esp8266 -t uploadfs     # web pages (data/ folder: main page + /tune page)
+pio run -e esp8266 -t uploadfs     # web pages (data/ folder: main page, /tune, /program)
 pio device monitor -b 115200
 ```
 
@@ -138,7 +139,7 @@ PlatformIO installs the two external libraries automatically from `platformio.in
 | Storage | Holds | How it gets there |
 |---|---|---|
 | **microSD card** | All sensor data logs (`data*.log`) | Written by the firmware while logging |
-| Internal flash (LittleFS) | The web pages (`data/index.template.html`, `data/tune.html`) and saved PID gains (`/pid.json`, written by the board) | Pages: `pio run -t uploadfs` / `make filesystem`. This also erases `/pid.json` |
+| Internal flash (LittleFS) | The web pages (`data/index.template.html`, `data/tune.html`, `data/program.html`), the saved PID settings (`/pid.json`) and the last setpoint program (`/program.json`), both written by the board | Pages: `pio run -t uploadfs` / `make filesystem`. This also erases `/pid.json` and `/program.json` |
 
 Sensor data is never stored in internal flash.
 
@@ -160,10 +161,10 @@ Sensor data is never stored in internal flash.
 Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... When a file reaches 50 MB, logging continues in the next free name. Every file starts with the CSV header: if the current log file is deleted while the board is running, the next write recreates it with a header. The files are CSV text:
 
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control
-64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0
-259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0
-3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control,step
+64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0,0
+259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0,0
+3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0,0
 ```
 The first two rows are raw (`samples` = 1). The third is an averaged row (32 sample cycles), so its ADC columns are mean counts with 2 decimals.
 
@@ -187,8 +188,9 @@ The first two rows are raw (`samples` = 1). The third is an averaged row (32 sam
 | 16 | aux_v | V | AUX Temp Sensor voltage at A0, `aux_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `aux_temp` is calculated from. |
 | 17 | samples | cycles | Sample cycles in the row: 1 = raw, N = averaged (see Averaging) |
 | 18 | control | 0/1 | Sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX Temp Sensor. `target_temp` applies to it |
+| 19 | step | - | Setpoint program step (1-40) when the row was sampled; 0 = no program running |
 
-Columns 1-6 are the original format. Columns 7-18 were added after them, so scripts that read by column name keep working.
+Columns 1-6 are the original format. Columns 7-19 were added after them, so scripts that read by column name keep working.
 
 A raw row is one pass over channels 0 → 1 → 2, so its three readings are taken within ~4 ms of each other.
 
@@ -214,7 +216,7 @@ then subtract the hotplate correction for that reading (see Calibration). That r
 
 **Gains:** the kp/ki/kd columns hold the gains when the row was sampled. Changing them with `/pid/params` saves the buffered rows first, so rows never show gains they weren't sampled under. The serial monitor warns if that save fails.
 
-With averaging off, the maximum rate is about 95 bytes × 167 rows/s ≈ 57 MB per hour, so a new 50 MB file starts about every 53 minutes. With averaging on at N = 32 it is about 2 MB per hour.
+With averaging off, the maximum rate is about 97 bytes × 167 rows/s ≈ 58 MB per hour, so a new 50 MB file starts about every 52 minutes. With averaging on at N = 32 it is about 2 MB per hour.
 
 ## Technical Details
 
@@ -243,7 +245,7 @@ With averaging off, the maximum rate is about 95 bytes × 167 rows/s ≈ 57 MB p
 | Derivative | On the measurement (no kick when the setpoint changes) |
 | Default target | 45 °C |
 | Max safe temperature | 130 °C |
-| Max continuous heater time | 1 h (`MAX_HEATER_TIME`) |
+| Max continuous heater time | 3 h (`MAX_HEATER_TIME`) |
 
 The PID uses the latest logged reading, or reads the sensors directly when the buffer is empty, so it works with logging on or off. Its output (0-100%) sets the PWM duty directly.
 
@@ -257,6 +259,17 @@ The **Control sensor** setting under Temperature Control picks which thermistor 
 
 Before 2026-10-29 the integral was clamped to ±100, which with Ki = 0.25 capped it at 25 % output. Above ~60 °C the sheet needs more power than that to hold, so it settled several degrees below the setpoint (e.g. 88 °C for a 92 °C setpoint). With the old gains (2.2 / 0.25 / 0.15) the corrected PID overshoots ~10 °C, so the defaults changed and the gains should be tuned on the fixture.
 
+### Setpoint program (`/program`)
+For experiments: run through a list of setpoints automatically, logging everything. Open `http://192.168.4.1/program` (or the link on the main page).
+
+- **The list:** up to 40 steps, one per line: a setpoint in °C, optionally followed by its own hold time in minutes (`62.5`, `62.5 15`, `62.5, 15` or `62.5:15`). Lines without a time use the **default hold**. "Generate a list" fills it from a start, end and step (optionally back down again). The total must fit within the 3 h heater limit.
+- **Timing only:** each step lasts exactly its hold time from when it starts. The program doesn't wait for the temperature to settle; it just changes the setpoint when the time is up.
+- **What Start does:** turns on SD logging (into the current log file, with the main page's settings such as averaging), sets the first setpoint and turns the PID on with the selected **control sensor** (PID or AUX) and its gains. The steps then run on the board, so the page can be closed. Choose the control sensor, gains and averaging on the main page before starting; PID gains can be adjusted while it runs.
+- **At the end:** either turn the heater off or keep holding the last setpoint until stopped, and optionally stop logging.
+- **It stops (heater off, logging left as it was)** on Stop, if the heater, PID, setpoint or control sensor is changed from the main page, if logging stops (including the low-memory auto-stop), if the PID stops itself (a sensor fault) or on an emergency shutdown. A tuning test and a program can't run at the same time.
+- **In the log:** the `step` column (19) gives the running step number (0 outside a program), and `target_temp` the setpoint, so each step can be cut out of the file afterwards.
+- The page shows the current step, time left, the step list with progress, the current logging/control settings, and a live plot from when the page was opened. The last program started is saved on the board (`/program.json`) and reloaded into the editor.
+
 ### PID tuning page (`/tune`)
 Open `http://192.168.4.1/tune` (or the link on the main page), with the whole fixture set up as for a measurement. Close the main page while tuning: each open page keeps its own connection to the board. The tests run on the board, so a dropped Wi-Fi link can't leave the heater on.
 
@@ -267,13 +280,13 @@ Tests and the gain fit use the selected control sensor (switch it at the top of 
 3. **Setpoint test (PID on).** Runs the PID with chosen gains through up to 4 setpoints, holding each, then turns the heater off. It reports overshoot, settling time (±0.5 °C on a 10 s average) and the remaining error for each step.
 4. **Apply / Save.** "Apply" sets the selected sensor's running gains. "Save" also stores both sensors' gains, the control sensor and the sheet limit on the board's flash (`/pid.json`), loaded at boot. Uploading the filesystem image (`make filesystem` or `make deploy`) erases them: note them first. `make upload` (firmware only) keeps them.
 
-Safety during tests: the heater turns off if the sheet passes 120 °C, the PID sensor (or, when tuning on AUX, the AUX sensor) faults, an emergency shutdown happens, a test runs over 55 min (under the 1 h heater limit), or the heater/PID is changed from the main page. "Stop test" turns the heater off at any time. Test data (1 s samples, PID and AUX temperatures, heater power) is kept in RAM and can be downloaded as CSV. Turn logging on as well to keep a full record on the SD card.
+Safety during tests: the heater turns off if the sheet passes 120 °C, the PID sensor (or, when tuning on AUX, the AUX sensor) faults, an emergency shutdown happens, a test runs over 55 min, or the heater/PID is changed from the main page. "Stop test" turns the heater off at any time. Test data (1 s samples, PID and AUX temperatures, heater power) is kept in RAM and can be downloaded as CSV. Turn logging on as well to keep a full record on the SD card.
 
 Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint?sp=80,90,95&hold=&kp=&ki=&kd=` (hold 1–15 min, at most 54 min in total), `/tune/stop`, `/tune/status`, `/tune/data?from=`, `/pid/save`, `/pid/sensor?s=pid|aux&limit=`.
 
 ### Safety
 - Over-temperature (> 130 °C) and sensor-fault shutdown, based on the PID Temp Sensor. These checks use the latest logged reading, so they only run while logging is on. Keep logging running whenever the heater is on. The AUX Temp Sensor does not trigger a shutdown, but while it is the control sensor a fault on it stops the PID and turns the heater off.
-- 1-hour continuous-heating limit (`MAX_HEATER_TIME`, Ticker every 500 ms). Under PID the duty rarely drops to 0%, so a hold longer than an hour reaches this limit and shuts down. Raised from 30 min for multi-temperature runs of ~45 min.
+- 3-hour continuous-heating limit (`MAX_HEATER_TIME`, Ticker every 500 ms). Under PID the duty rarely drops to 0%, so heating for longer than 3 hours reaches this limit and shuts down. Raised from 30 min (then 1 h) for long setpoint programs. The main page, `/program` and the boot message all read it from the firmware.
 - Software watchdog (checked every 8 s) + ESP hardware watchdog
 - Logging auto-stops when free heap < 8 KB
 - On shutdown the heater PWM goes to 0, PID and logging stop, and any open log file is closed
@@ -286,6 +299,7 @@ Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint
 | `/tune` | PID tuning page; tests via `/tune/step`, `/tune/setpoint`, `/tune/stop`, `/tune/status`, `/tune/data`; `/pid/save` stores the gains |
 | `/averaging?enabled=&n=` | Averaging on/off and cycles per row |
 | `/pid/sensor?s=pid\|aux&limit=` | Select the control sensor and/or the sheet limit; returns the gains now in use |
+| `/program` | Setpoint program page; runs via `/program/start?steps=60:10,61,62:5&hold=10&end=off\|hold&stoplog=1`, `/program/stop`, `/program/status`, `/program/saved` |
 | `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
 | `/status` | One-shot JSON reading and settings: `temperature` (PID Temp Sensor), `auxTemperature` (AUX Temp Sensor), raw ADC counts and divider voltages |
 | `/logs` | JSON list of log files `{name, size}` |
@@ -312,12 +326,14 @@ src/
 ├── heater_controller.*    # PWM output, PID, heater safety checks
 ├── safety_system.*        # Ticker safety check, watchdog, emergency shutdown
 ├── tuning.*               # PID tuning tests (power step, setpoint), saved gains
+├── program.*              # setpoint program (experiment) runner
 ├── web_interface.*        # HTTP routes, WebSocket, page templating
 ├── wifi_manager.*         # access point
 └── debug_config.h         # centralized debug macros (not used yet, see md_info_docs/DEBUG_MIGRATION_GUIDE.md)
 data/
 ├── index.template.html    # main web page (uploaded to LittleFS)
-└── tune.html              # PID tuning page (uploaded to LittleFS)
+├── tune.html              # PID tuning page (uploaded to LittleFS)
+└── program.html           # setpoint program page (uploaded to LittleFS)
 config.h                   # reference of key settings (not compiled in)
 ```
 

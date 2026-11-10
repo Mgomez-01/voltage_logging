@@ -5,7 +5,7 @@
 #include <LittleFS.h>
 #include <SD.h>
 
-// One logged row (36 bytes in RAM). With averaging off, a row is one sample
+// One logged row (40 bytes in RAM). With averaging off, a row is one sample
 // cycle (channels 0 -> 1 -> 2) and the ADC fields hold whole raw counts. With
 // averaging on, a row is the mean of `samples` cycles and the ADC fields hold
 // the mean counts (fractional). Some logged values are not stored per row to
@@ -28,6 +28,7 @@ struct SensorReading {
   bool pidEnabled;           // True if the PID was controlling the heater
   uint8_t samples;           // Sample cycles in this row: 1 = raw, N = averaged
   uint8_t control;           // Sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX
+  uint8_t step;              // Setpoint program step (1-40), 0 = no program running
 };
 
 // Averaging (oversampling). Off by default: every sample cycle is logged raw.

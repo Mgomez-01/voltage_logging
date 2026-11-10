@@ -191,4 +191,4 @@ OK
 - PID Temp Sensor resolution: ~4-6 ADC counts per °C at 60-70 °C (100k NTC with 100 kΩ)
 - AUX Temp Sensor resolution: ~9 ADC counts per °C at 60-70 °C (10k NTC with 2.0 kΩ)
 - Temperature accuracy: about ±1.5 °C absolute, a few tenths of a °C between the two sensors (ice/boiling calibration + hotplate correction; see README.md, "Calibration")
-- Logging: 50-row buffer written to the SD card, ~95 bytes per row (18 columns). A new 50 MB file about every 53 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).
+- Logging: 50-row buffer written to the SD card, ~97 bytes per row (19 columns). A new 50 MB file about every 52 min at the full rate, or ~2 MB/hour with averaging on (32 cycles per row).

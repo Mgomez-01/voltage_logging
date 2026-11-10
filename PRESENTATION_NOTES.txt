@@ -226,8 +226,9 @@ Setpoint / limits:
   Settable range .............. 0 to 130 C  (GET /temp/set?temp=<value>)
   MAX_SAFE_TEMPERATURE ........ 130.0 C  -> emergency shutdown
   Sensor-fault window ......... < -50 C or > 200 C while heater is on -> shutdown
-  MAX_HEATER_TIME ............. 3,600,000 ms = 1 h continuous heating -> shutdown
-                                (was 30 min; raised for ~45 min multi-temp runs)
+  MAX_HEATER_TIME ............. 10,800,000 ms = 3 h continuous heating -> shutdown
+                                (was 30 min, then 1 h; raised for long setpoint
+                                programs)
   Reset allowed below ......... 120 C (MAX_SAFE_TEMPERATURE - 10) and only
                                 with a valid sensor reading
 
@@ -271,6 +272,17 @@ How it behaves (for slides):
     for a 92 C setpoint.)
   - D acts on the measured temperature, so a setpoint change causes no kick.
 
+Setpoint program (/program, firmware src/program.cpp) - for experiments:
+  - Up to 40 steps: setpoint (20-120 C) + hold time (0.5-180 min each,
+    default hold for steps without one). Total must fit in the 3 h limit.
+  - Start turns on SD logging (current settings, e.g. averaging) and the
+    PID on the selected control sensor; the board then runs the steps.
+  - Steps advance on time only (no wait for the temperature to settle).
+  - End: heater off, or hold the last setpoint; optionally stop logging.
+  - Stops (heater off) on Stop, main-page heater/PID/setpoint/sensor
+    changes, logging stopping, a PID sensor fault or emergency shutdown.
+  - Log column "step" gives the step number for each row.
+
 PID tuning page (/tune, firmware src/tuning.cpp):
   1. Power step test, PID off: hold power 1 until the control sensor
      settles, step to power 2, record until settled, heater off.
@@ -287,7 +299,7 @@ Manual control: /relay/on = 100 % PWM (disables PID); /relay/off = 0 %.
   (The route names are left over from the relay version.)
 
 Safety layers:
-  1. Ticker every 500 ms: heater on for more than 1 h straight -> PWM 0,
+  1. Ticker every 500 ms: heater on for more than 3 h straight -> PWM 0,
      shutdown
   2. Main loop: over-temp (> 130 C) and sensor fault -> shutdown
      (PID Temp Sensor only; the AUX Temp Sensor does not trigger shutdowns,
@@ -312,7 +324,7 @@ File rotation ........ When the current file reaches 50 MB (MAX_FILE_SIZE =
                        50,000,000 B), a new data_N.log is started with a header
 Header ............... timestamp,voltage,temperature,heater_state,target_temp,pid_output,
                        voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-                       aux_temp,aux_adc,aux_v,samples,control
+                       aux_temp,aux_adc,aux_v,samples,control,step
 Write strategy ....... 50-row RAM buffer -> open file, append 50 rows, close.
                        Also flushed on Stop Logging and on low-heap auto-stop.
 Write protection ..... 5 s max per write; watchdog fed every 5 rows; skips a
@@ -355,10 +367,12 @@ CSV columns:
 |18 | control      | 0/1   | integer    | Sensor the PID controls: 0 = PID Temp |
 |   |              |       |            | Sensor, 1 = AUX (target_temp is for   |
 |   |              |       |            | that sensor)                          |
+|19 | step         | -     | integer    | Setpoint program step (1-40), 0 = no  |
+|   |              |       |            | program running                       |
 +---+--------------+-------+------------+---------------------------------------+
 * Mean count with 2 decimals in averaged rows (samples > 1).
 
-Columns 1-6 are the original format; 7-18 were added after them.
+Columns 1-6 are the original format; 7-19 were added after them.
 thermistor_v and aux_v let you re-check every temperature:
   P = Rs * V / (3.32 - V);  R = P * 320k / (320k - P)
   1/T = 1/298.15 + ln(R/R25)/B  (T in K)
@@ -371,14 +385,14 @@ thermistor_v and aux_v let you re-check every temperature:
 
 Example rows: two of your logged rows as the corrected firmware logs them
 (raw: room temperature, then stable at 45 C), then an averaged row:
-  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control
-  64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0
-  259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0
-  3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0   (averaged, 32 cycles)
+  timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control,step
+  64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0,0
+  259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0,0
+  3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0,0   (averaged, 32 cycles)
 
 Data volume (theoretical maximum rate):
-  Averaging off: ~95 bytes/row x ~167 rows/s = ~15.9 KB/s = ~57 MB/hour
-  -> a new 50 MB file about every 53 min; an 8 GB card holds ~140 h
+  Averaging off: ~97 bytes/row x ~167 rows/s = ~16.2 KB/s = ~58 MB/hour
+  -> a new 50 MB file about every 52 min; an 8 GB card holds ~138 h
   Averaging on (N = 32): ~5 rows/s, ~2 MB/hour
   (Real rate is lower, see section 5. Timestamps restart at 0 in each
    boot's file, so files don't mix runs.)
@@ -407,8 +421,8 @@ v1 (main/heater_pid/html_fix, May 2025): LittleFS internal flash, relay on
 v2 (SD_card_edition, Oct-Nov 2025): logs moved to the microSD card; new file
    per boot; web log manager. Internal flash would fill in minutes.
 v3 (SD_pwm_edition, Dec 2025): relay replaced by AOD4144 MOSFET PWM;
-   continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit (1 h since
-   2026-10-31), 500 ms PID,
+   continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit (1 h from
+   2026-10-31, 3 h from 2026-11-03), 500 ms PID,
    new gains 2.2/0.25/0.15.
 v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    updates, low-heap auto-stop, 50 MB file rotation, System Reset button,
@@ -432,11 +446,12 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    show a ~31 ms period.
 3. Over-temperature check gap: the over-temp and sensor-fault checks use the
    logging buffer. With logging OFF the buffer is empty and those checks are
-   skipped, even though the PID can still heat. Only the 1 h runtime limit
+   skipped, even though the PID can still heat. Only the 3 h runtime limit
    and the watchdog apply then. Keep logging on whenever the heater runs, or
    make the safety check read the sensor directly.
-4. 1-hour limit (was 30 min): under PID the duty rarely drops to 0 %, so a
-   long hold counts as "continuous heating" and triggers a shutdown at 1 h.
+4. 3-hour limit (was 30 min, then 1 h): under PID the duty rarely drops to
+   0 %, so a long run counts as "continuous heating" and triggers a shutdown
+   at 3 h. A setpoint program must fit within it.
 5. ADC scaling: on a NodeMCU/D1 mini, A0's onboard 220k/100k divider gives a
    3.2 V full scale and a 320 k load. The thermistor conversions now model
    both (see section 4b). The voltage channel still uses ADC/1024 (0-1 V), so

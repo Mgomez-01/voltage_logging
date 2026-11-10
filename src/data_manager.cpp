@@ -10,11 +10,12 @@
 // samples = sample cycles in the row (1 = raw; N = averaged, *_adc are means)
 // control = sensor the PID controls (0 = PID Temp Sensor, 1 = AUX Temp Sensor);
 //           target_temp applies to that sensor
+// step    = setpoint program step (1-40) when the row was sampled, 0 = none
 // Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
 const char CSV_HEADER[] PROGMEM =
     "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
     "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,"
-    "aux_temp,aux_adc,aux_v,samples,control";
+    "aux_temp,aux_adc,aux_v,samples,control,step";
 
 static void printCsvHeader(File& f) {
   f.println(FPSTR(CSV_HEADER));
@@ -308,7 +309,9 @@ void writeBufferToFile() {
         dataFile.print(",");
         dataFile.print(readings[i].samples);
         dataFile.print(",");
-        dataFile.println(readings[i].control);
+        dataFile.print(readings[i].control);
+        dataFile.print(",");
+        dataFile.println(readings[i].step);
 
         if (aux > -50 && aux < 150) {
             if (aux < batchAuxMin) batchAuxMin = aux;

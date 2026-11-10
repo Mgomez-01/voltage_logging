@@ -45,7 +45,7 @@
 <body>
 <header>
   <h1>PID Tuning: <span id="ctlTitle">PID Temp Sensor (sheet)</span></h1>
-  <a href="/">&larr; Back to the logger</a>
+  <nav><a href="/">&larr; Back to the logger</a> &nbsp; <a href="/program">Setpoint program</a></nav>
 </header>
 <main>
 
@@ -92,7 +92,7 @@
     The heater then turns off. Pick powers around your working range: from the 2026-10-26 run, about 25&ndash;35&nbsp;% holds the
     sheet near 85&ndash;100&nbsp;&deg;C and the sample near 60&ndash;70&nbsp;&deg;C. The sample responds much more slowly than the sheet,
     so allow 15&ndash;20 min per phase when tuning on AUX. The test stops if the sheet passes <span id="maxTemp">120</span>&nbsp;&deg;C,
-    or after 55 min (under the 1&nbsp;h heater limit).</p>
+    or after 55 min.</p>
   <div class="row">
     <label>Start power (%)<input id="p1" type="number" value="25" min="0" max="80" step="1"></label>
     <label>Step to (%)<input id="p2" type="number" value="35" min="0" max="80" step="1"></label>

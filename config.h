@@ -98,14 +98,15 @@
 //   File names    = data.log, data_1.log, data_2.log, ... (new file each boot)
 //   CSV header    = timestamp,voltage,temperature,heater_state,target_temp,pid_output,
 //                   voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,
-//                   aux_temp,aux_adc,aux_v,samples,control
-//                   (CSV_HEADER in data_manager.cpp; ~95 bytes per raw row)
+//                   aux_temp,aux_adc,aux_v,samples,control,step
+//                   (CSV_HEADER in data_manager.cpp; ~97 bytes per raw row)
 //     temperature / thermistor_adc / thermistor_v = PID Temp Sensor (channel 1)
 //     aux_temp / aux_adc / aux_v                  = AUX Temp Sensor (channel 2)
 //     *_adc        = raw ADC counts (0-1023), or mean counts (2 decimals)
 //                    when averaged
 //     samples      = sample cycles in the row: 1 = raw, N = averaged
 //     control      = sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX
+//     step         = setpoint program step (1-40), 0 = no program
 //     *_v          = adc / 1024 * 3.2 * ADC_CALIBRATION_GAIN, the A0 voltage
 //                    each temperature is calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
@@ -157,12 +158,18 @@
 //   PID tuning (src/tuning.cpp, /tune page)
 //   TUNE_MAX_SAMPLES     = 600 x 8 bytes, 1 s (halves resolution when full)
 //   TUNE_MAX_TEMP        = 120 C   test stops (heater off) above this
-//   TUNE_MAX_TOTAL_MS    = 55 min  test stops after this (under the 1 h limit)
+//   TUNE_MAX_TOTAL_MS    = 55 min  test stops after this
+//
+//   Setpoint program (src/program.cpp, /program page)
+//   PROGRAM_MAX_STEPS    = 40      steps (setpoint 20-120 C, hold 0.5-180 min)
+//   Total time           <= MAX_HEATER_TIME (3 h)
+//   Start turns on logging + PID; steps advance on time only; end action
+//   heater off or hold last; optional stop logging at the end
 //   Step test settling   = >= 2 min and |trend| < 0.15 C/min over 60 s
 //   Output               = 0-100% -> PWM duty
 //
 //   MAX_SAFE_TEMPERATURE = 130.0 C        Over-temp emergency shutdown
-//   MAX_HEATER_TIME      = 3600000 ms     1 h continuous heating limit (was 30 min)
+//   MAX_HEATER_TIME      = 10800000 ms    3 h continuous heating limit (was 30 min, then 1 h)
 //
 //   The over-temp and sensor-fault checks use the latest logged reading, so
 //   they only run while logging is on. The PID itself reads the sensor

@@ -5,6 +5,7 @@
 #include "data_manager.h"
 #include "safety_system.h"
 #include "tuning.h"
+#include "program.h"
 
 // Statistics for debugging
 unsigned long totalWebSocketMessages = 0;
@@ -43,6 +44,9 @@ void setupWebServer() {
 
   // PID tuning page and tests
   setupTuningRoutes();
+
+  // Setpoint program (experiment) page
+  setupProgramRoutes();
 
   Serial.println("OK");
   server.begin();
@@ -350,33 +354,45 @@ void handleStatus() {
   Serial.println(dataLoggingEnabled ? "ON" : "OFF");
 }
 
-void handleStartLogging() {
-  Serial.println("HTTP: Start logging requested");
-
+// Start logging to the SD card with the current settings (averaging etc.).
+// Retries the SD setup if no log file exists yet. Returns false if logging
+// can't start (no SD card / no log file). Used by Start Logging and by the
+// setpoint program.
+bool beginDataLogging() {
   // If the SD card was not ready at boot, no log file was created and every
   // buffer write would fail. Try again now (e.g. after the card was inserted).
   if (logFileName[0] == '\0') {
-    Serial.println("HTTP: No log file yet - retrying SD card setup");
+    Serial.println("LOGGING: No log file yet - retrying SD card setup");
     initializeDataFile();
   }
   if (logFileName[0] == '\0') {
+    Serial.println("LOGGING: NOT started - SD card not ready");
+    return false;
+  }
+  if (!dataLoggingEnabled) {
+    dataLoggingEnabled = true;
+    lastSample = millis();
+    lastWebUpdate = millis();
+    currentSensorChannel = VOLTAGE_CHANNEL;
+    resetRowAverage();  // Don't mix cycles from before the pause into the first averaged row
+  }
+  Serial.print("LOGGING: STARTED - writing to ");
+  Serial.println(logFileName);
+  return true;
+}
+
+void handleStartLogging() {
+  Serial.println("HTTP: Start logging requested");
+  if (!beginDataLogging()) {
     server.send(503, "text/plain", "Cannot start logging: SD card not ready (no log file). Check the card and try again.");
-    Serial.println("HTTP: Logging NOT started - SD card not ready");
     return;
   }
-
-  dataLoggingEnabled = true;
-  lastSample = millis();
-  lastWebUpdate = millis();
-  currentSensorChannel = VOLTAGE_CHANNEL;
-  resetRowAverage();  // Don't mix cycles from before the pause into the first averaged row
   server.send(200, "text/plain", "Sensor logging started");
-  Serial.print("HTTP: Sensor logging STARTED - writing to ");
-  Serial.println(logFileName);
 }
 
 void handleStopLogging() {
   Serial.println("HTTP: Stop logging requested");
+  stopProgram("logging stopped from the main page");
   dataLoggingEnabled = false;
   flushDataBuffer();
   server.send(200, "text/plain", "Sensor logging stopped");
@@ -416,6 +432,7 @@ void handleAveraging() {
 void handleRelayOn() {
   Serial.println("HTTP: Heater ON requested (manual 100% PWM)");
   stopTuning("heater turned on from the main page");
+  stopProgram("heater turned on from the main page");
   heaterEnabled = true;
   pidEnabled = false;  // Disable PID for manual control
   setHeaterPower(100.0);  // Set to 100% PWM
@@ -425,6 +442,7 @@ void handleRelayOn() {
 void handleRelayOff() {
   Serial.println("HTTP: Heater OFF requested");
   stopTuning("heater turned off from the main page");
+  stopProgram("heater turned off from the main page");
   heaterEnabled = false;
   pidEnabled = false;
   setHeaterPower(0.0);  // Set to 0% PWM
@@ -434,6 +452,7 @@ void handleRelayOff() {
 void handleSetTemperature() {
   if (server.hasArg("temp")) {
     stopTuning("setpoint changed from the main page");
+    stopProgram("setpoint changed from the main page");
     float newTemp = server.arg("temp").toFloat();
     if (newTemp >= 0 && newTemp <= MAX_SAFE_TEMPERATURE) {
       targetTemperature = newTemp;
@@ -452,6 +471,7 @@ void handleSetTemperature() {
 void handlePIDEnable() {
   Serial.println("HTTP: PID control ENABLED");
   stopTuning("PID enabled from the main page");
+  stopProgram("PID enabled from the main page");
   pidEnabled = true;
   heaterEnabled = true;
   resetPIDState();
@@ -463,6 +483,7 @@ void handlePIDEnable() {
 void handlePIDDisable() {
   Serial.println("HTTP: PID control DISABLED");
   stopTuning("PID disabled from the main page");
+  stopProgram("PID disabled from the main page");
   pidEnabled = false;
   server.send(200, "text/plain", "PID control disabled");
 }
@@ -519,6 +540,7 @@ void handlePIDSensor() {
   }
   if (changeSensor && wanted != controlSensor) {
     stopTuning("control sensor changed");
+    stopProgram("control sensor changed");
     // kp/ki/kd are written from the current gains when the buffer is saved:
     // save the rows sampled under the old sensor's gains first
     flushDataBuffer();
@@ -603,6 +625,7 @@ void handleDeleteLog() {
 void handleSystemReset() {
   Serial.println("HTTP: System reset requested");
   stopTuning("system reset");
+  stopProgram("system reset");
   
   // Safety check - verify temperature is reasonable before allowing reset
   selectMuxChannel(THERMISTOR_CHANNEL);

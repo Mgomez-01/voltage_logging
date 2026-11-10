@@ -90,8 +90,8 @@ Trade-off: the low resistance passes more current through the NTC. At 65 °C it 
 ## CSV format
 Each boot creates a new file on the SD card (`data.log`, `data_1.log`, ...):
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control
-64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control,step
+64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0,0
 ```
 `temperature` is the PID Temp Sensor and `aux_temp` is the AUX Temp Sensor. Column details are in [README.md](../README.md#data-format).
 

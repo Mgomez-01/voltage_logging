@@ -3,6 +3,7 @@
 #include "sensor_manager.h"
 #include "safety_system.h"
 #include "web_interface.h"
+#include "program.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -12,7 +13,7 @@
 const uint16_t TUNE_MAX_SAMPLES = 600;            // 600 x 8 bytes = 4.8 KB of RAM
 const float TUNE_MAX_TEMP = 120.0;                // Stop if the sheet (PID Temp Sensor) exceeds this
                                                   // (MAX_SAFE_TEMPERATURE 130 is the emergency limit)
-const unsigned long TUNE_MAX_TOTAL_MS = 55UL * 60UL * 1000UL;  // 55 min, under the 1 h heater limit
+const unsigned long TUNE_MAX_TOTAL_MS = 55UL * 60UL * 1000UL;  // 55 min per test (the heater limit is 3 h)
 const uint8_t TUNE_MAX_SETPOINTS = 4;
 static const float TUNE_MAX_POWER = 80.0;         // Highest heater power a step test may use (%)
 static const unsigned long MIN_PHASE_MS = 120000; // Hold each step test phase at least 2 min
@@ -307,6 +308,7 @@ static void handleTunePage() {
 static bool refuseStart() {
   if (emergencyShutdown) { sendText(409, F("Emergency shutdown active: reset the system first")); return true; }
   if (tuningActive()) { sendText(409, F("A test is already running")); return true; }
+  if (programActive()) { sendText(409, F("A setpoint program is running: stop it first")); return true; }
   return false;
 }
 

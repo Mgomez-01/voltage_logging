@@ -32,6 +32,7 @@ void handleRoot();
 void handleDataDownload();
 void handleClearData();
 void handleStatus();
+bool beginDataLogging();  // Start SD logging with current settings; false if no log file
 void handleStartLogging();
 void handleStopLogging();
 void handleRelayOn();
