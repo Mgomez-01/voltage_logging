@@ -11,7 +11,7 @@ A data logger built on the ESP8266. It reads a voltage and two NTC thermistors t
 - **PID temperature control**: runs every 500 ms, independent of data logging
 - **Real-time web interface**: WebSocket updates, a live plot and statistics. The plot is drawn by the page itself (no internet needed): PID and AUX temperatures, the setpoint while the PID is on, and heater power or voltage on the right axis, over a 2 min to 60 min window, downloadable as CSV
 - **PID tuning page** (`/tune`): power step and setpoint tests with suggested gains (see Heater / PID)
-- **Setpoint program page** (`/program`): run an experiment through a list of up to 40 setpoints, each held for a set time, with logging on (see Setpoint program)
+- **Setpoint program page** (`/program`): run an experiment through a list of up to 100 setpoints, each held for a set time, with logging on (see Setpoint program)
 - **WiFi access point**: no router needed
 - **Safety system**: over-temperature, sensor-fault and max-runtime shutdown, software and hardware watchdogs, SD write timeouts, low-memory guard, and a web "System Reset" to recover
 
@@ -188,7 +188,7 @@ The first two rows are raw (`samples` = 1). The third is an averaged row (32 sam
 | 16 | aux_v | V | AUX Temp Sensor voltage at A0, `aux_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `aux_temp` is calculated from. |
 | 17 | samples | cycles | Sample cycles in the row: 1 = raw, N = averaged (see Averaging) |
 | 18 | control | 0/1 | Sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX Temp Sensor. `target_temp` applies to it |
-| 19 | step | - | Setpoint program step (1-40) when the row was sampled; 0 = no program running |
+| 19 | step | - | Setpoint program step (1-100) when the row was sampled; 0 = no program running |
 
 Columns 1-6 are the original format. Columns 7-19 were added after them, so scripts that read by column name keep working.
 
@@ -245,7 +245,7 @@ With averaging off, the maximum rate is about 97 bytes × 167 rows/s ≈ 58 MB p
 | Derivative | On the measurement (no kick when the setpoint changes) |
 | Default target | 45 °C |
 | Max safe temperature | 130 °C |
-| Max continuous heater time | 3 h (`MAX_HEATER_TIME`) |
+| Max continuous heater time | 6 h (`MAX_HEATER_TIME`) |
 
 The PID uses the latest logged reading, or reads the sensors directly when the buffer is empty, so it works with logging on or off. Its output (0-100%) sets the PWM duty directly.
 
@@ -262,7 +262,8 @@ Before 2026-10-29 the integral was clamped to ±100, which with Ki = 0.25 capped
 ### Setpoint program (`/program`)
 For experiments: run through a list of setpoints automatically, logging everything. Open `http://192.168.4.1/program` (or the link on the main page).
 
-- **The list:** up to 40 steps, one per line: a setpoint in °C, optionally followed by its own hold time in minutes (`62.5`, `62.5 15`, `62.5, 15` or `62.5:15`). Lines without a time use the **default hold**. "Generate a list" fills it from a start, end and step (optionally back down again). The total must fit within the 3 h heater limit.
+- **The list:** up to 100 steps, one per line: a setpoint in °C, optionally followed by its own hold time in minutes (`62.5`, `62.5 15`, `62.5, 15` or `62.5:15`; 0.5–360 min). Lines without a time use the **default hold**. The total must fit within the 6 h heater limit.
+- **Generate steps** *appends* a run from a start to an end setpoint in a given step size (optionally back down again) to the end of the list, so a pattern can be built from pieces, e.g. 60→70 in 0.5 °C steps, then 70→65, then 65→72. If the first new setpoint equals the last one in the list it is skipped, so a turn-around point isn't held twice. **Clear the list** empties it.
 - **Timing only:** each step lasts exactly its hold time from when it starts. The program doesn't wait for the temperature to settle; it just changes the setpoint when the time is up.
 - **What Start does:** turns on SD logging (into the current log file, with the main page's settings such as averaging), sets the first setpoint and turns the PID on with the selected **control sensor** (PID or AUX) and its gains. The steps then run on the board, so the page can be closed. Choose the control sensor, gains and averaging on the main page before starting; PID gains can be adjusted while it runs.
 - **At the end:** either turn the heater off or keep holding the last setpoint until stopped, and optionally stop logging.
@@ -286,7 +287,7 @@ Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint
 
 ### Safety
 - Over-temperature (> 130 °C) and sensor-fault shutdown, based on the PID Temp Sensor. These checks use the latest logged reading, so they only run while logging is on. Keep logging running whenever the heater is on. The AUX Temp Sensor does not trigger a shutdown, but while it is the control sensor a fault on it stops the PID and turns the heater off.
-- 3-hour continuous-heating limit (`MAX_HEATER_TIME`, Ticker every 500 ms). Under PID the duty rarely drops to 0%, so heating for longer than 3 hours reaches this limit and shuts down. Raised from 30 min (then 1 h) for long setpoint programs. The main page, `/program` and the boot message all read it from the firmware.
+- 6-hour continuous-heating limit (`MAX_HEATER_TIME`, Ticker every 500 ms). Under PID the duty rarely drops to 0%, so heating for longer than 6 hours reaches this limit and shuts down. Raised from 30 min (then 1 h, then 3 h) for long setpoint programs (e.g. ~70 half-degree steps of 5 min up and back down). The main page, `/program` and the boot message all read it from the firmware.
 - Software watchdog (checked every 8 s) + ESP hardware watchdog
 - Logging auto-stops when free heap < 8 KB
 - On shutdown the heater PWM goes to 0, PID and logging stop, and any open log file is closed
@@ -299,7 +300,7 @@ Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint
 | `/tune` | PID tuning page; tests via `/tune/step`, `/tune/setpoint`, `/tune/stop`, `/tune/status`, `/tune/data`; `/pid/save` stores the gains |
 | `/averaging?enabled=&n=` | Averaging on/off and cycles per row |
 | `/pid/sensor?s=pid\|aux&limit=` | Select the control sensor and/or the sheet limit; returns the gains now in use |
-| `/program` | Setpoint program page; runs via `/program/start?steps=60:10,61,62:5&hold=10&end=off\|hold&stoplog=1`, `/program/stop`, `/program/status`, `/program/saved` |
+| `/program` | Setpoint program page; runs via `/program/start?steps=60:10,61,62:5&hold=10&end=off\|hold&stoplog=1`, `/program/stop`, `/program/status`, `/program/steps` (current list), `/program/saved` (last list started) |
 | `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
 | `/status` | One-shot JSON reading and settings: `temperature` (PID Temp Sensor), `auxTemperature` (AUX Temp Sensor), raw ADC counts and divider voltages |
 | `/logs` | JSON list of log files `{name, size}` |

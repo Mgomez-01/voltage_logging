@@ -7,11 +7,11 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
-const uint8_t PROGRAM_MAX_STEPS = 40;
+const uint8_t PROGRAM_MAX_STEPS = 100;
 static const float PROGRAM_MIN_TEMP = 20.0;
 static const float PROGRAM_MAX_TEMP = 120.0;     // MAX_SAFE_TEMPERATURE - 10
 static const float PROGRAM_MIN_HOLD_MIN = 0.5;
-static const float PROGRAM_MAX_HOLD_MIN = 180.0;
+static const float PROGRAM_MAX_HOLD_MIN = 360.0;   // Per step; the total must also fit MAX_HEATER_TIME
 static const char* PROGRAM_FILE = "/program.json";  // Last program started (for the page to reload)
 
 enum ProgramState : uint8_t {
@@ -27,8 +27,10 @@ struct ProgramStep {
   uint16_t holdS;      // Hold time (s)
 };
 
-static ProgramStep steps[40];
+static ProgramStep steps[100];          // 100 x 8 bytes
 static uint8_t stepCount = 0;
+static float defaultHoldMin = 10;       // Default hold of the current/last program (min)
+static uint16_t listId = 0;             // Changes each time a program starts (page reloads the list)
 static uint8_t stepIndex = 0;           // 0-based step being run
 static ProgramState state = PROGRAM_IDLE;
 static unsigned long programStartMs = 0;
@@ -126,25 +128,75 @@ static void handleProgramPage() {
   f.close();
 }
 
-static void saveProgramFile(float defaultHoldMin) {
+// The program as JSON: {"listId":..,"hold":..,"end":"off|hold","stopLog":true,
+// "steps":[[temp,min],...]}. Written piece by piece (up to 100 steps) instead
+// of building a JsonDocument, to keep RAM use small.
+template <typename Out>
+static void writeProgramJson(Out& out) {
+  char buf[48];
+  snprintf_P(buf, sizeof(buf), PSTR("{\"listId\":%u,\"hold\":%.2f,\"end\":\""), listId, defaultHoldMin);
+  out.print(buf);
+  out.print(holdLastAtEnd ? F("hold") : F("off"));
+  out.print(stopLoggingAtEnd ? F("\",\"stopLog\":true,\"steps\":[") : F("\",\"stopLog\":false,\"steps\":["));
+  for (uint8_t i = 0; i < stepCount; i++) {
+    snprintf_P(buf, sizeof(buf), PSTR("%s[%.2f,%.2f]"), i ? "," : "", steps[i].temp, steps[i].holdS / 60.0);
+    out.print(buf);
+  }
+  out.print(F("]}"));
+}
+
+static void saveProgramFile() {
   File f = LittleFS.open(PROGRAM_FILE, "w");
   if (!f) return;
-  JsonDocument doc;
-  doc["hold"] = defaultHoldMin;
-  doc["end"] = holdLastAtEnd ? "hold" : "off";
-  doc["stopLog"] = stopLoggingAtEnd;
-  JsonArray a = doc["steps"].to<JsonArray>();
-  for (uint8_t i = 0; i < stepCount; i++) {
-    JsonArray s = a.add<JsonArray>();
-    s.add(steps[i].temp);
-    s.add(steps[i].holdS / 60.0);
-  }
-  serializeJson(doc, f);
+  writeProgramJson(f);
   f.close();
 }
 
+// Collects text for a chunked HTTP response, sending it in ~1 KB pieces
+struct ChunkWriter {
+  String buf;
+  void print(const char* s) { buf += s; flushIfBig(); }
+  void print(const __FlashStringHelper* s) { buf += s; flushIfBig(); }
+  void flushIfBig() { if (buf.length() > 1000) { server.sendContent(buf); buf = ""; } }
+  void finish() { if (buf.length()) server.sendContent(buf); server.sendContent(""); }
+};
+
+// Parse "temp[:minutes],..." into steps (when store is true). Returns the
+// number of steps, or -1 with err set.
+static int parseStepList(const String& list, float defaultHold, bool store, float& totalMin, String& err) {
+  int n = 0;
+  totalMin = 0;
+  int start = 0;
+  while (start <= (int)list.length()) {
+    int comma = list.indexOf(',', start);
+    String item = list.substring(start, comma < 0 ? list.length() : comma);
+    item.trim();
+    if (item.length() > 0) {
+      if (n >= PROGRAM_MAX_STEPS) { err = String(F("At most ")) + String(PROGRAM_MAX_STEPS) + " steps"; return -1; }
+      int colon = item.indexOf(':');
+      float temp = (colon < 0 ? item : item.substring(0, colon)).toFloat();
+      float hold = colon < 0 ? defaultHold : item.substring(colon + 1).toFloat();
+      if (temp < PROGRAM_MIN_TEMP || temp > PROGRAM_MAX_TEMP) {
+        err = String(F("Step ")) + String(n + 1) + ": setpoint must be " + String(PROGRAM_MIN_TEMP, 0) + "-" + String(PROGRAM_MAX_TEMP, 0) + " C";
+        return -1;
+      }
+      if (hold < PROGRAM_MIN_HOLD_MIN || hold > PROGRAM_MAX_HOLD_MIN) {
+        err = String(F("Step ")) + String(n + 1) + ": hold must be 0.5-360 minutes";
+        return -1;
+      }
+      uint16_t holdS = (uint16_t)lroundf(hold * 60.0f);
+      if (store) { steps[n].temp = temp; steps[n].holdS = holdS; }
+      totalMin += holdS / 60.0f;
+      n++;
+    }
+    if (comma < 0) break;
+    start = comma + 1;
+  }
+  return n;
+}
+
 // /program/start?steps=60:10,61,62:5&hold=10&end=off|hold&stoplog=1
-//   steps: up to 40 entries "temp" or "temp:minutes"; entries without minutes
+//   steps: up to 100 entries "temp" or "temp:minutes"; entries without minutes
 //   use hold (minutes). Total time must fit within the heater time limit.
 static void handleProgramStart() {
   if (emergencyShutdown) { sendText(409, F("Emergency shutdown active: reset the system first")); return; }
@@ -154,40 +206,18 @@ static void handleProgramStart() {
 
   float defaultHold = server.hasArg("hold") ? server.arg("hold").toFloat() : 10;
   if (defaultHold < PROGRAM_MIN_HOLD_MIN || defaultHold > PROGRAM_MAX_HOLD_MIN) {
-    sendText(400, F("Default hold must be 0.5-180 minutes"));
+    sendText(400, F("Default hold must be 0.5-360 minutes"));
     return;
   }
 
-  ProgramStep parsed[40];
-  uint8_t n = 0;
-  float totalMin = 0;
+  // Two passes over the list: check it all first, then store it, so a
+  // rejected list doesn't overwrite the last program and no second buffer is
+  // needed
   String list = server.arg("steps");
-  int start = 0;
-  while (start <= (int)list.length()) {
-    int comma = list.indexOf(',', start);
-    String item = list.substring(start, comma < 0 ? list.length() : comma);
-    item.trim();
-    if (item.length() > 0) {
-      if (n >= PROGRAM_MAX_STEPS) { sendText(400, String(F("At most ")) + String(PROGRAM_MAX_STEPS) + " steps"); return; }
-      int colon = item.indexOf(':');
-      float temp = (colon < 0 ? item : item.substring(0, colon)).toFloat();
-      float hold = colon < 0 ? defaultHold : item.substring(colon + 1).toFloat();
-      if (temp < PROGRAM_MIN_TEMP || temp > PROGRAM_MAX_TEMP) {
-        sendText(400, String(F("Step ")) + String(n + 1) + ": setpoint must be " + String(PROGRAM_MIN_TEMP, 0) + "-" + String(PROGRAM_MAX_TEMP, 0) + " C");
-        return;
-      }
-      if (hold < PROGRAM_MIN_HOLD_MIN || hold > PROGRAM_MAX_HOLD_MIN) {
-        sendText(400, String(F("Step ")) + String(n + 1) + ": hold must be 0.5-180 minutes");
-        return;
-      }
-      parsed[n].temp = temp;
-      parsed[n].holdS = (uint16_t)lroundf(hold * 60.0f);
-      totalMin += parsed[n].holdS / 60.0f;
-      n++;
-    }
-    if (comma < 0) break;
-    start = comma + 1;
-  }
+  String err;
+  float totalMin = 0;
+  int n = parseStepList(list, defaultHold, false, totalMin, err);
+  if (n < 0) { sendText(400, err); return; }
   if (n == 0) { sendText(400, F("No steps given")); return; }
   float limitMin = MAX_HEATER_TIME / 60000.0f;
   if (totalMin > limitMin) {
@@ -203,11 +233,13 @@ static void handleProgramStart() {
     return;
   }
 
-  memcpy(steps, parsed, sizeof(ProgramStep) * n);
+  parseStepList(list, defaultHold, true, totalMin, err);
   stepCount = n;
   holdLastAtEnd = server.hasArg("end") && server.arg("end") == "hold";
   stopLoggingAtEnd = !server.hasArg("stoplog") || server.arg("stoplog") == "1";
-  saveProgramFile(defaultHold);
+  defaultHoldMin = defaultHold;
+  listId++;
+  saveProgramFile();
 
   programStartMs = millis();
   state = PROGRAM_RUNNING;
@@ -255,8 +287,9 @@ static void latestTemps(float& pidT, float& auxT) {
   }
 }
 
-// /program/status: program state and steps, plus live readings and the
-// logging/heater settings the page shows
+// /program/status: program state, plus live readings and the logging/heater
+// settings the page shows. The step list itself is at /program/steps (fetched
+// when listId changes), so this stays small with 100 steps.
 static void handleProgramStatus() {
   JsonDocument doc;
   unsigned long now = millis();
@@ -278,13 +311,8 @@ static void handleProgramStatus() {
     doc["totalTime"] = total;
     doc["totalRemaining"] = programRunning() ? total - before - stepElapsed : 0;
     doc["elapsed"] = programActive() ? (now - programStartMs) / 1000.0 : (finishedMs - programStartMs) / 1000.0;
-    JsonArray a = doc["steps"].to<JsonArray>();
-    for (uint8_t i = 0; i < stepCount; i++) {
-      JsonArray s = a.add<JsonArray>();
-      s.add(steps[i].temp);
-      s.add(steps[i].holdS / 60.0);
-    }
   }
+  doc["listId"] = listId;
   doc["endAction"] = holdLastAtEnd ? "hold" : "off";
   doc["stopLog"] = stopLoggingAtEnd;
   // Live state
@@ -313,6 +341,14 @@ static void handleProgramStatus() {
   server.send(200, "application/json", out);
 }
 
+// /program/steps: the current (or last) program's step list
+static void handleProgramSteps() {
+  server.chunkedResponseModeStart(200, "application/json");
+  ChunkWriter w;
+  writeProgramJson(w);
+  w.finish();
+}
+
 // /program/saved: the last program started (for the page to reload)
 static void handleProgramSaved() {
   File f = LittleFS.open(PROGRAM_FILE, "r");
@@ -327,4 +363,5 @@ void setupProgramRoutes() {
   server.on("/program/stop", handleProgramStop);
   server.on("/program/status", handleProgramStatus);
   server.on("/program/saved", handleProgramSaved);
+  server.on("/program/steps", handleProgramSteps);
 }

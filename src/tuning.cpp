@@ -13,7 +13,7 @@
 const uint16_t TUNE_MAX_SAMPLES = 600;            // 600 x 8 bytes = 4.8 KB of RAM
 const float TUNE_MAX_TEMP = 120.0;                // Stop if the sheet (PID Temp Sensor) exceeds this
                                                   // (MAX_SAFE_TEMPERATURE 130 is the emergency limit)
-const unsigned long TUNE_MAX_TOTAL_MS = 55UL * 60UL * 1000UL;  // 55 min per test (the heater limit is 3 h)
+const unsigned long TUNE_MAX_TOTAL_MS = 55UL * 60UL * 1000UL;  // 55 min per test (the heater limit is 6 h)
 const uint8_t TUNE_MAX_SETPOINTS = 4;
 static const float TUNE_MAX_POWER = 80.0;         // Highest heater power a step test may use (%)
 static const unsigned long MIN_PHASE_MS = 120000; // Hold each step test phase at least 2 min

@@ -97,7 +97,7 @@
       Setpoints apply to the selected control sensor (<span id="ctlName">-</span>, set on the <a href="/">main page</a>).</p>
     <textarea id="steps" spellcheck="false" oninput="preview()"></textarea>
     <div class="row" style="margin-top:8px">
-      <label>Default hold (min)<input id="hold" type="number" value="10" min="0.5" max="180" step="0.5" oninput="preview()"></label>
+      <label>Default hold (min)<input id="hold" type="number" value="5" min="0.5" max="360" step="0.5" oninput="preview()"></label>
       <label>When the last step ends
         <select id="endAction">
           <option value="off">Turn the heater off</option>
@@ -107,15 +107,18 @@
       <label class="inline"><input type="checkbox" id="stopLog" checked> Stop logging when the steps end</label>
     </div>
     <details style="margin-top:10px">
-      <summary style="cursor:pointer;font-size:14px">Generate a list</summary>
+      <summary style="cursor:pointer;font-size:14px">Generate steps</summary>
       <div class="row" style="margin-top:8px">
         <label>From (&deg;C)<input id="gFrom" type="number" value="60" step="0.1"></label>
         <label>To (&deg;C)<input id="gTo" type="number" value="70" step="0.1"></label>
         <label>Step (&deg;C)<input id="gStep" type="number" value="0.5" step="0.1"></label>
         <label class="inline"><input type="checkbox" id="gBack"> and back down</label>
-        <button class="secondary" onclick="generate()">Fill the list</button>
+        <button class="secondary" onclick="generate()">Append to the list</button>
+        <button class="secondary" onclick="clearList()">Clear the list</button>
       </div>
-      <p class="note">Uses the default hold for every step. Replaces the list above.</p>
+      <p class="note">Adds the steps to the end of the list, each with the default hold, so you can build up any pattern
+        (e.g. 60&rarr;70 in 0.5&nbsp;&deg;C, then 70&rarr;65, then 65&rarr;72). If the first new setpoint equals the last one
+        in the list it is skipped, so the turn-around point isn't held twice.</p>
     </details>
     <div class="row" style="margin-top:12px">
       <button class="go" id="startBtn" onclick="startProgram()">Start program</button>
@@ -136,7 +139,9 @@
 "use strict";
 var st = null;            // last /program/status
 var hist = [];            // [t_s, pid, aux, target, duty]
-var MAX_STEPS = 40;
+var MAX_STEPS = 100;
+var progSteps = [];       // step list of the current/last program (from /program/steps)
+var progListId = -1;
 var shownSteps = '';      // what the step table shows ('edit' or 'program')
 
 function $(id) { return document.getElementById(id); }
@@ -164,7 +169,7 @@ function parseSteps() {
     var temp = parseFloat(parts[0]), hold = parts.length > 1 ? parseFloat(parts[1]) : def;
     if (isNaN(temp)) { errors.push('line ' + (i + 1) + ': not a number'); return; }
     if (temp < 20 || temp > 120) errors.push('line ' + (i + 1) + ': setpoint must be 20-120 °C');
-    if (isNaN(hold) || hold < 0.5 || hold > 180) errors.push('line ' + (i + 1) + ': hold must be 0.5-180 min');
+    if (isNaN(hold) || hold < 0.5 || hold > 360) errors.push('line ' + (i + 1) + ': hold must be 0.5-360 min');
     out.push([temp, hold]);
   });
   if (out.length > MAX_STEPS) errors.push(out.length + ' steps: at most ' + MAX_STEPS);
@@ -189,7 +194,7 @@ function preview() {
   if (st && st.active) return;   // While a program runs the table shows the program
   var p = parseSteps(), tb = stepTable(p.steps, 0, false);
   $('stepTable').innerHTML = tb.html;
-  var limit = st ? st.maxHeaterMinutes : 180;
+  var limit = st ? st.maxHeaterMinutes : 360;
   var text = p.steps.length + ' steps, ' + hms(tb.total * 60) + ' total (limit ' + limit + ' min of continuous heating)';
   if (tb.total > limit) p.errors.push('total ' + fmt(tb.total, 1) + ' min is over the ' + limit + ' min heater limit');
   $('summary').innerHTML = p.errors.length ? '<span class="warn">' + p.errors.join('; ') + '</span>' : text;
@@ -204,8 +209,21 @@ function generate() {
   for (var i = 0; i <= n; i++) list.push(+(a + dir * i * d).toFixed(3));
   if (list[list.length - 1] !== b && Math.abs(list[list.length - 1] - b) > 1e-6) list.push(b);
   if ($('gBack').checked) list = list.concat(list.slice(0, -1).reverse());
-  if (list.length > MAX_STEPS) { alert(list.length + ' steps: at most ' + MAX_STEPS + '. Use a larger step.'); return; }
-  $('steps').value = list.join('\n');
+  var existing = parseSteps().steps;
+  var last = existing.length ? existing[existing.length - 1][0] : null;
+  if (last !== null && Math.abs(list[0] - last) < 1e-6) list.shift();   // don't hold the turn-around twice
+  if (existing.length + list.length > MAX_STEPS) {
+    alert('That would make ' + (existing.length + list.length) + ' steps: at most ' + MAX_STEPS + '. Use a larger step or a shorter range.');
+    return;
+  }
+  var text = $('steps').value.replace(/\s+$/, '');
+  $('steps').value = (text ? text + '\n' : '') + list.join('\n');
+  preview();
+}
+
+function clearList() {
+  if ($('steps').value.trim() && !confirm('Clear the whole list?')) return;
+  $('steps').value = '';
   preview();
 }
 
@@ -273,7 +291,7 @@ function show(s) {
 
   if (s.active) {
     // A program is running: the table tracks its progress
-    var tb = stepTable(s.steps || [], s.step, s.running);
+    var tb = stepTable(progSteps, s.step, s.running);
     $('stepTable').innerHTML = tb.html;
     $('summary').textContent = s.count + ' steps, ' + hms(s.totalTime) + ' total';
     shownSteps = 'program';
@@ -286,9 +304,16 @@ function show(s) {
   if (hist.length > 6000) hist.shift();
   redraw();
 
-  if (first) {
-    if (s.active && s.steps) fillFrom({ steps: s.steps, hold: (s.steps[0] || [0, 10])[1], end: s.endAction, stopLog: s.stopLog });
-    else fetch('/program/saved').then(function (r) { return r.ok ? r.json() : null; }).then(function (sv) { if (sv && sv.steps && !$('steps').value) fillFrom(sv); }).catch(function () {});
+  // The step list is fetched separately, only when a new program has started
+  if (s.listId !== progListId && s.count) {
+    fetch('/program/steps').then(function (r) { return r.json(); }).then(function (p) {
+      progSteps = p.steps || [];
+      progListId = p.listId;
+      if (first && s.active) fillFrom(p);   // Show the running program in the editor
+    }).catch(function () {});
+  }
+  if (first && !s.active) {
+    fetch('/program/saved').then(function (r) { return r.ok ? r.json() : null; }).then(function (sv) { if (sv && sv.steps && !$('steps').value) fillFrom(sv); }).catch(function () {});
   }
 }
 

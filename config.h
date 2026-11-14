@@ -106,7 +106,7 @@
 //                    when averaged
 //     samples      = sample cycles in the row: 1 = raw, N = averaged
 //     control      = sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX
-//     step         = setpoint program step (1-40), 0 = no program
+//     step         = setpoint program step (1-100), 0 = no program
 //     *_v          = adc / 1024 * 3.2 * ADC_CALIBRATION_GAIN, the A0 voltage
 //                    each temperature is calculated from (thermistorAdcToVoltage())
 //     pid_enabled  = 1 if the PID was controlling the heater
@@ -161,15 +161,15 @@
 //   TUNE_MAX_TOTAL_MS    = 55 min  test stops after this
 //
 //   Setpoint program (src/program.cpp, /program page)
-//   PROGRAM_MAX_STEPS    = 40      steps (setpoint 20-120 C, hold 0.5-180 min)
-//   Total time           <= MAX_HEATER_TIME (3 h)
+//   PROGRAM_MAX_STEPS    = 100     steps (setpoint 20-120 C, hold 0.5-360 min)
+//   Total time           <= MAX_HEATER_TIME (6 h)
 //   Start turns on logging + PID; steps advance on time only; end action
 //   heater off or hold last; optional stop logging at the end
 //   Step test settling   = >= 2 min and |trend| < 0.15 C/min over 60 s
 //   Output               = 0-100% -> PWM duty
 //
 //   MAX_SAFE_TEMPERATURE = 130.0 C        Over-temp emergency shutdown
-//   MAX_HEATER_TIME      = 10800000 ms    3 h continuous heating limit (was 30 min, then 1 h)
+//   MAX_HEATER_TIME      = 21600000 ms    6 h continuous heating limit (was 30 min, 1 h, 3 h)
 //
 //   The over-temp and sensor-fault checks use the latest logged reading, so
 //   they only run while logging is on. The PID itself reads the sensor

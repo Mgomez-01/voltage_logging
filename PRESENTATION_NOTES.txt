@@ -226,9 +226,9 @@ Setpoint / limits:
   Settable range .............. 0 to 130 C  (GET /temp/set?temp=<value>)
   MAX_SAFE_TEMPERATURE ........ 130.0 C  -> emergency shutdown
   Sensor-fault window ......... < -50 C or > 200 C while heater is on -> shutdown
-  MAX_HEATER_TIME ............. 10,800,000 ms = 3 h continuous heating -> shutdown
-                                (was 30 min, then 1 h; raised for long setpoint
-                                programs)
+  MAX_HEATER_TIME ............. 21,600,000 ms = 6 h continuous heating -> shutdown
+                                (was 30 min, 1 h, then 3 h; raised for long
+                                setpoint programs)
   Reset allowed below ......... 120 C (MAX_SAFE_TEMPERATURE - 10) and only
                                 with a valid sensor reading
 
@@ -273,8 +273,10 @@ How it behaves (for slides):
   - D acts on the measured temperature, so a setpoint change causes no kick.
 
 Setpoint program (/program, firmware src/program.cpp) - for experiments:
-  - Up to 40 steps: setpoint (20-120 C) + hold time (0.5-180 min each,
-    default hold for steps without one). Total must fit in the 3 h limit.
+  - Up to 100 steps: setpoint (20-120 C) + hold time (0.5-360 min each,
+    default hold for steps without one). Total must fit in the 6 h limit.
+  - "Generate steps" appends a from/to/step run to the list (turn-around
+    point not repeated), so up/down patterns can be built from pieces.
   - Start turns on SD logging (current settings, e.g. averaging) and the
     PID on the selected control sensor; the board then runs the steps.
   - Steps advance on time only (no wait for the temperature to settle).
@@ -299,7 +301,7 @@ Manual control: /relay/on = 100 % PWM (disables PID); /relay/off = 0 %.
   (The route names are left over from the relay version.)
 
 Safety layers:
-  1. Ticker every 500 ms: heater on for more than 3 h straight -> PWM 0,
+  1. Ticker every 500 ms: heater on for more than 6 h straight -> PWM 0,
      shutdown
   2. Main loop: over-temp (> 130 C) and sensor fault -> shutdown
      (PID Temp Sensor only; the AUX Temp Sensor does not trigger shutdowns,
@@ -367,7 +369,7 @@ CSV columns:
 |18 | control      | 0/1   | integer    | Sensor the PID controls: 0 = PID Temp |
 |   |              |       |            | Sensor, 1 = AUX (target_temp is for   |
 |   |              |       |            | that sensor)                          |
-|19 | step         | -     | integer    | Setpoint program step (1-40), 0 = no  |
+|19 | step         | -     | integer    | Setpoint program step (1-100), 0 = no |
 |   |              |       |            | program running                       |
 +---+--------------+-------+------------+---------------------------------------+
 * Mean count with 2 decimals in averaged rows (samples > 1).
@@ -422,7 +424,7 @@ v2 (SD_card_edition, Oct-Nov 2025): logs moved to the microSD card; new file
    per boot; web log manager. Internal flash would fill in minutes.
 v3 (SD_pwm_edition, Dec 2025): relay replaced by AOD4144 MOSFET PWM;
    continuous 0-100 % PID; target 45 C, max 130 C, 30 min limit (1 h from
-   2026-10-31, 3 h from 2026-11-03), 500 ms PID,
+   2026-10-31, 3 h from 2026-11-03, 6 h from 2026-11-10), 500 ms PID,
    new gains 2.2/0.25/0.15.
 v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    updates, low-heap auto-stop, 50 MB file rotation, System Reset button,
@@ -446,12 +448,12 @@ v4 (better_memory_management, Dec 2025-Jan 2026): 50-row buffer, 500 ms web
    show a ~31 ms period.
 3. Over-temperature check gap: the over-temp and sensor-fault checks use the
    logging buffer. With logging OFF the buffer is empty and those checks are
-   skipped, even though the PID can still heat. Only the 3 h runtime limit
+   skipped, even though the PID can still heat. Only the 6 h runtime limit
    and the watchdog apply then. Keep logging on whenever the heater runs, or
    make the safety check read the sensor directly.
-4. 3-hour limit (was 30 min, then 1 h): under PID the duty rarely drops to
-   0 %, so a long run counts as "continuous heating" and triggers a shutdown
-   at 3 h. A setpoint program must fit within it.
+4. 6-hour limit (was 30 min, 1 h, then 3 h): under PID the duty rarely
+   drops to 0 %, so a long run counts as "continuous heating" and triggers a
+   shutdown at 6 h. A setpoint program must fit within it.
 5. ADC scaling: on a NodeMCU/D1 mini, A0's onboard 220k/100k divider gives a
    3.2 V full scale and a 320 k load. The thermistor conversions now model
    both (see section 4b). The voltage channel still uses ADC/1024 (0-1 V), so

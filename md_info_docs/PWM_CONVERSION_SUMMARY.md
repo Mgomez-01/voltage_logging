@@ -49,7 +49,7 @@ const int PWM_RANGE = 1000;    // 0.1% resolution
 #### `checkHeaterSafety()`:
 - Now checks `heaterDutyCycle > 0` instead of `relayState`
 - Shuts down by setting PWM to 0 instead of digital LOW
-- Added continuous runtime check (10 minute safety timeout at the time; now 3 hours)
+- Added continuous runtime check (10 minute safety timeout at the time; now 6 hours)
 
 #### Safety Features Maintained:
 - Over-temperature shutdown (>120°C at the time; now >130°C)

@@ -28,7 +28,7 @@ struct SensorReading {
   bool pidEnabled;           // True if the PID was controlling the heater
   uint8_t samples;           // Sample cycles in this row: 1 = raw, N = averaged
   uint8_t control;           // Sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX
-  uint8_t step;              // Setpoint program step (1-40), 0 = no program running
+  uint8_t step;              // Setpoint program step (1-100), 0 = no program running
 };
 
 // Averaging (oversampling). Off by default: every sample cycle is logged raw.

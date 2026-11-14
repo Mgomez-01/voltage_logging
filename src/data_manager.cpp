@@ -10,7 +10,7 @@
 // samples = sample cycles in the row (1 = raw; N = averaged, *_adc are means)
 // control = sensor the PID controls (0 = PID Temp Sensor, 1 = AUX Temp Sensor);
 //           target_temp applies to that sensor
-// step    = setpoint program step (1-40) when the row was sampled, 0 = none
+// step    = setpoint program step (1-100) when the row was sampled, 0 = none
 // Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
 const char CSV_HEADER[] PROGMEM =
     "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
