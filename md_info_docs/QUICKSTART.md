@@ -4,22 +4,19 @@
 ```bash
 pip install platformio
 ```
-The ESP8266 platform and the ArduinoJson / WebSockets libraries download automatically on the first build.
+The ESP8266 platform and the ArduinoJson / WebSockets / NeoPixelBus libraries download automatically on the first build.
 
-## 2. Wire the hardware
-- CD74HC4067 mux: COM→A0, S0-S3→D1-D4, VCC+EN→3.3 V, GND
-- Voltage source → mux C0 (0-1 V scale in software)
-- PID Temp Sensor divider → mux C1: 3.3 V → 100 kΩ → C1 → 100k NTC → GND
-- AUX Temp Sensor divider → mux C2: 3.3 V → 2.0 kΩ → C2 → MF55 10k NTC → GND (selectable as the PID control sensor)
-- microSD module: SCK→D5, MISO→D6, MOSI→D7, CS→D8, VCC 3.3 V, GND
-- Heater (optional): D0 → AOD4144 gate (10 kΩ gate→GND), 12 V heater on the drain, common ground
+## 2. Assemble and connect the PCB
+- Fit the NodeMCU v2 in its socket (check the orientation against the silkscreen)
+- PID Temp Sensor (100k NTC) → J4, AUX Temp Sensor (MF55 10k NTC) → J5 (selectable as the PID control sensor)
+- microSD card in J6 (bottom side, push until it clicks)
+- Heater (optional): 12 V supply → J1, heater → J2. The logic still runs from the NodeMCU's USB
 
-Full details: [WIRING_GUIDE.md](../WIRING_GUIDE.md)
+Full details and bring-up checks: [WIRING_GUIDE.md](../WIRING_GUIDE.md)
 
 ## 3. Upload firmware and web page
 ```bash
-make deploy                     # NodeMCU (env esp8266)
-make deploy ENV=wemos_d1_mini   # Wemos D1 mini
+make deploy                     # NodeMCU v2 on the PCB (env esp8266)
 ```
 This uploads the firmware, uploads the web page to internal flash, and opens the serial monitor at 115200 baud.
 
@@ -38,7 +35,7 @@ Created new data file: data_N.log
 
 ## 6. Heater (optional)
 - Set a target (default 45 °C, max 130 °C) and press **Enable PID**, or use manual ON/OFF
-- Keep logging running while the heater is on so the over-temperature check stays active
+- The status LED shows the heater power (blue = 0 % → red = 100 %); it flashes orange after a heater timeout and yellow after any other emergency shutdown
 - After an emergency shutdown, press **System Reset**
 
 ## Where to change settings
@@ -46,7 +43,8 @@ Created new data file: data_N.log
 |---|---|
 | WiFi SSID / password | `src/wifi_manager.cpp` |
 | Sample / web update intervals | `src/main.cpp` |
-| Mux pins, thermistor constants | `src/sensor_manager.cpp` |
+| ADC pins, thermistor constants | `src/sensor_manager.cpp` |
+| Status LED colours / brightness | `src/status_led.cpp` |
 | Buffer size, file rotation size | `src/data_manager.cpp` |
 | PWM, PID gains, target, safety limits | `src/heater_controller.cpp` |
 

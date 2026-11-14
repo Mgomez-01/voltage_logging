@@ -72,7 +72,6 @@ void sendWebUpdate() {
       // Skip redundant updates to reduce memory allocations
       static float lastSentTemp = -999;
       static float lastSentAuxTemp = -999;
-      static float lastSentVoltage = -999;
       static bool lastSentHeaterState = false;
       static float lastSentDuty = -1;
       static float lastSentTarget = -999;
@@ -81,14 +80,12 @@ void sendWebUpdate() {
       static unsigned long lastSentMs = 0;
       float currentTemp = readings[idx].temperature;
       float currentAuxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
-      float currentVoltage = readings[idx].voltage;
       bool currentHeaterState = readings[idx].heaterState;
 
-      // Only send if something changed noticeably (temperatures, voltage, heater
+      // Only send if something changed noticeably (temperatures, heater
       // power, setpoint, PID on/off), or every 5 s so the live plot keeps moving
       if (abs(currentTemp - lastSentTemp) < 0.1 &&
           abs(currentAuxTemp - lastSentAuxTemp) < 0.1 &&
-          abs(currentVoltage - lastSentVoltage) < 0.01 &&
           currentHeaterState == lastSentHeaterState &&
           abs(readings[idx].pidValue - lastSentDuty) < 1.0 &&
           readings[idx].targetTemp == lastSentTarget &&
@@ -100,7 +97,6 @@ void sendWebUpdate() {
 
       lastSentTemp = currentTemp;
       lastSentAuxTemp = currentAuxTemp;
-      lastSentVoltage = currentVoltage;
       lastSentHeaterState = currentHeaterState;
       lastSentDuty = readings[idx].pidValue;
       lastSentTarget = readings[idx].targetTemp;
@@ -113,7 +109,6 @@ void sendWebUpdate() {
       doc.clear();
       
       doc["timestamp"] = readings[idx].timestamp;
-      doc["voltage"] = readings[idx].voltage;
       doc["temperature"] = readings[idx].temperature;   // PID Temp Sensor
       doc["auxTemperature"] = currentAuxTemp;            // AUX Temp Sensor
       doc["type"] = "reading";
@@ -136,8 +131,7 @@ void sendWebUpdate() {
         Serial.print(" sent to "); Serial.print(connectedClients);
         Serial.print(" clients: "); Serial.print(jsonBuffer);
         Serial.print(" (buffer idx: "); Serial.print(idx);
-        Serial.print(", V: "); Serial.print(readings[idx].voltage, 4);
-        Serial.print("V, PID T: "); Serial.print(readings[idx].temperature, 2);
+        Serial.print(", PID T: "); Serial.print(readings[idx].temperature, 2);
         Serial.print(F("°C, AUX T: ")); Serial.print(currentAuxTemp, 2); Serial.println("°C)");
       }
       #endif
@@ -157,7 +151,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       JsonDocument doc;
       doc["type"] = "welcome";
       doc["message"] = "Sensor WebSocket connected successfully";
-      doc["sensors"] = "voltage+pid_temp+aux_temp";
+      doc["sensors"] = "pid_temp+aux_temp";
       doc["timestamp"] = millis();
       String welcomeJson;
       serializeJson(doc, welcomeJson);
@@ -200,12 +194,12 @@ void sendTemplatedPage(const char* filename) {
 
         // Perform replacements
         line.replace("{{WIFI_IP}}", WiFi.softAPIP().toString());
-        line.replace("{{ADC_PIN_NUM}}", String(A0));
+        line.replace("{{ADC_PIN_NUM}}", "MCP3208");
         line.replace("{{LOGGING_STATUS_TEXT_INITIAL}}", dataLoggingEnabled ? "ACTIVE" : "PAUSED");
         line.replace("{{LOGGING_STATUS_COLOR_INITIAL}}", dataLoggingEnabled ? "#28a745" : "#dc3545");
         line.replace("{{START_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "disabled" : "");
         line.replace("{{STOP_LOGGING_DISABLED_ATTR}}", dataLoggingEnabled ? "" : "disabled");
-        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 sample cycles per second)" : "Click 'Start Logging' to begin data collection");
+        line.replace("{{LOGGING_DESCRIPTION_INITIAL}}", dataLoggingEnabled ? "Currently collecting sensor readings (up to ~167 rows per second)" : "Click 'Start Logging' to begin data collection");
         line.replace("{{AVG_CHECKED_ATTR}}", averagingEnabled ? "checked" : "");
         line.replace("{{CTL_PID_CHECKED}}", controlSensor == CONTROL_PID_SENSOR ? "checked" : "");
         line.replace("{{CTL_AUX_CHECKED}}", controlSensor == CONTROL_AUX_SENSOR ? "checked" : "");
@@ -299,24 +293,16 @@ void handleClearData() {
 
 void handleStatus() {
   Serial.println("HTTP: Status requested (polling mode)");
-  selectMuxChannel(VOLTAGE_CHANNEL);
-  delay(5);
-  int voltageADC = analogRead(A0);
-  float currentVoltage = (voltageADC / 1024.0);
-  selectMuxChannel(THERMISTOR_CHANNEL);
-  delay(5);
-  int tempADC = analogRead(A0);
+  // 16 conversions per sensor (~1 ms): a steadier reading than one sample
+  float tempADC = readAdcChannelAveraged(THERMISTOR_CHANNEL, 16);
   float currentTemperature = convertThermistorToTemperature(tempADC);
-  selectMuxChannel(AUX_THERMISTOR_CHANNEL);
-  delay(5);
-  int auxADC = analogRead(A0);
+  float auxADC = readAdcChannelAveraged(AUX_THERMISTOR_CHANNEL, 16);
   float currentAuxTemperature = convertAuxThermistorToTemperature(auxADC);
   JsonDocument doc;
   doc["timestamp"] = millis();
-  doc["voltage"] = currentVoltage;
   doc["temperature"] = currentTemperature;            // PID Temp Sensor
   doc["auxTemperature"] = currentAuxTemperature;      // AUX Temp Sensor
-  doc["voltageADC"] = voltageADC;
+  doc["adcFullScale"] = 4096;                          // MCP3208
   doc["temperatureADC"] = tempADC;
   doc["thermistorVoltage"] = thermistorAdcToVoltage(tempADC);
   doc["auxTemperatureADC"] = auxADC;
@@ -341,12 +327,12 @@ void handleStatus() {
   doc["maxHeaterMinutes"] = MAX_HEATER_TIME / 60000UL;
   doc["averagingEnabled"] = averagingEnabled;
   doc["averageSamples"] = averageSamples;
+  doc["emergencyShutdown"] = (bool)emergencyShutdown;
+  doc["shutdownReason"] = shutdownReasonText();
   String jsonString;
   serializeJson(doc, jsonString);
   server.send(200, "application/json", jsonString);
-  Serial.print("HTTP: Status sent - V:");
-  Serial.print(currentVoltage, 4);
-  Serial.print("V, PID T:");
+  Serial.print("HTTP: Status sent - PID T:");
   Serial.print(currentTemperature, 2);
   Serial.print(F("°C, AUX T:"));
   Serial.print(currentAuxTemperature, 2);
@@ -371,9 +357,7 @@ bool beginDataLogging() {
   }
   if (!dataLoggingEnabled) {
     dataLoggingEnabled = true;
-    lastSample = millis();
     lastWebUpdate = millis();
-    currentSensorChannel = VOLTAGE_CHANNEL;
     resetRowAverage();  // Don't mix cycles from before the pause into the first averaged row
   }
   Serial.print("LOGGING: STARTED - writing to ");
@@ -628,10 +612,7 @@ void handleSystemReset() {
   stopProgram("system reset");
   
   // Safety check - verify temperature is reasonable before allowing reset
-  selectMuxChannel(THERMISTOR_CHANNEL);
-  delay(5);
-  int tempADC = analogRead(A0);
-  float currentTemp = convertThermistorToTemperature(tempADC);
+  float currentTemp = convertThermistorToTemperature(readAdcChannelAveraged(THERMISTOR_CHANNEL, 16));
   
   // Don't allow reset if temperature is dangerously high
   if (currentTemp > MAX_SAFE_TEMPERATURE - 10) {
@@ -660,12 +641,17 @@ void handleSystemReset() {
   bufferIndex = 0;
   bufferFull = false;
   Serial.println("RESET: Data buffer cleared (removed stale readings)");
+  // Sampling stops during the shutdown, so the live reading is the one from
+  // before it (maybe the over-temperature itself). Replace it with this read.
+  livePidTemperature = currentTemp;
+  liveSampleTime = millis() ? millis() : 1;
   
   // Small delay to ensure any in-flight safety checks see the cleared buffer
   delay(10);
   
   // Clear emergency shutdown flag (safe now that buffer is cleared)
   emergencyShutdown = false;
+  shutdownReason = SHUTDOWN_NONE;
   Serial.println("RESET: Emergency shutdown flag cleared");
   
   // Reset heater state

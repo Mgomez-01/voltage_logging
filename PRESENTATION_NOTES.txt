@@ -2,6 +2,15 @@
  ESP8266 VOLTAGE + TEMPERATURE LOGGER WITH SD CARD AND PWM HEATER CONTROL
  PRESENTATION NOTES
 ===============================================================================
+NOTE (pcb_update branch): these notes describe the breadboard build (CD74HC4067
+mux into A0, voltage on channel 0). The PCB replaces the mux and A0 with an
+MCP3208 12-bit SPI ADC (CH1 PID Temp Sensor, CH2 AUX Temp Sensor, read
+ratiometrically), puts the microSD on board sharing the SPI bus, adds a
+WS2812B status LED on RX/GPIO3, and drops the voltage input (the voltage
+columns are logged as 0, plus a new adc_fs = 4096 column). Sampling is one
+CH1 + CH2 cycle every 6 ms, running all the time, and the PID averages every
+cycle between its 500 ms updates. See README.md and WIRING_GUIDE.md for the PCB.
+-------------------------------------------------------------------------------
 Branch reviewed: better_memory_management  (commit d026e2f, 2026-01-07)
   - This is the newest firmware branch and the one checked out on your
     computer. Your local copy matches GitHub exactly.

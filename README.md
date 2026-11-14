@@ -1,127 +1,135 @@
-# ESP8266 Voltage + Temperature Logger with SD Card and PWM Heater Control
+# ESP8266 Temperature Logger with SD Card and PWM Heater Control (PCB version)
 
-A data logger built on the ESP8266. It reads a voltage and two NTC thermistors through a CD74HC4067 analog multiplexer, logs them to a microSD card, and drives a heater through a MOSFET with a PWM PID controller. Everything is controlled from a web page served over the ESP8266's own WiFi access point.
+A data logger built on the ESP8266. It reads two NTC thermistors with an MCP3208 12-bit SPI ADC, logs them to a microSD card, and drives a heater through a MOSFET with a PWM PID controller. Everything is controlled from a web page served over the ESP8266's own WiFi access point.
+
+**This branch (`pcb_update`) is for the `pcb_voltage_logging` PCB** (NodeMCU v2 in a socket, MCP3208, on-board microSD, WS2812B status LED). The earlier breadboard build (CD74HC4067 mux into A0, voltage input on channel 0) stays on the `main` branch. Fabrication notes are in [PCB_IMPLEMENTATION.md](PCB_IMPLEMENTATION.md); changes the next board revision needs are in [PCB_REVISIONS.md](PCB_REVISIONS.md).
 
 ## Features
 
-- **Sensor logging**: voltage (mux channel 0), **PID Temp Sensor** (channel 1, controls the heater) and **AUX Temp Sensor** (channel 2, a second thermistor at another location, normally on the sample). Either sensor can be the one the PID controls, selected on the web page; the safety checks always use the PID Temp Sensor
+- **Sensor logging**: **PID Temp Sensor** (MCP3208 CH1, J4, controls the heater) and **AUX Temp Sensor** (CH2, J5, a second thermistor at another location, normally on the sample). Either sensor can be the one the PID controls, selected on the web page; the safety checks always use the PID Temp Sensor
 - **SD card storage**: CSV-formatted log files on a microSD card, a new file every boot, automatic rotation at 50 MB
 - **Log file manager**: list, download and delete log files from the web page
 - **PWM heater control**: AOD4144 N-channel MOSFET driven at 0-100% duty from GPIO16
 - **PID temperature control**: runs every 500 ms, independent of data logging
-- **Real-time web interface**: WebSocket updates, a live plot and statistics. The plot is drawn by the page itself (no internet needed): PID and AUX temperatures, the setpoint while the PID is on, and heater power or voltage on the right axis, over a 2 min to 60 min window, downloadable as CSV
+- **Real-time web interface**: WebSocket updates, a live plot and statistics. The plot is drawn by the page itself (no internet needed): PID and AUX temperatures, the setpoint while the PID is on, and heater power on the right axis, over a 2 min to 6 h window, downloadable as CSV
 - **PID tuning page** (`/tune`): power step and setpoint tests with suggested gains (see Heater / PID)
 - **Setpoint program page** (`/program`): run an experiment through a list of up to 100 setpoints, each held for a set time, with logging on (see Setpoint program)
 - **WiFi access point**: no router needed
 - **Safety system**: over-temperature, sensor-fault and max-runtime shutdown, software and hardware watchdogs, SD write timeouts, low-memory guard, and a web "System Reset" to recover
+- **Status LED** (WS2812B): off when the heater is off, blue → red with heater power, flashing orange after a heater timeout, flashing yellow after any other emergency shutdown
 
 ## Hardware
 
-### Core components
-- **ESP8266 board**: NodeMCU v2 or Wemos D1 mini (ESP-12E/F)
-- **CD74HC4067** 16-channel analog multiplexer
-- **microSD card module** (SPI, 3.3 V) or Wemos D1 mini micro-SD shield, with a FAT16/FAT32-formatted card (Class 10 or faster recommended)
-- **100 kΩ resistor** for the PID Temp Sensor divider (measures 98 kΩ on this board; the firmware uses the measured value)
-- **2.0 kΩ resistor** for the AUX Temp Sensor divider (see below)
+### The PCB (`pcb_voltage_logging`)
+| Ref | Part | Function |
+|---|---|---|
+| U1 | NodeMCU v2 (in 0.9″ socket rows) | ESP8266, USB, 3.3 V regulator |
+| U2 | MCP3208-CI/SL | 12-bit 8-channel SPI ADC. VREF = VDD = +3V3 |
+| J4 / R1 / C8 | 2-pin JST PH, 100k, 100 nF | PID Temp Sensor input (CH1) |
+| J5 / R2 / C9 | 2-pin JST PH, 2k, 100 nF | AUX Temp Sensor input (CH2) |
+| J6 | Hirose DM3AT microSD (bottom side) | Log storage, shares SPI with U2. No card-detect wired |
+| R9 / R10 / R11 | 33 Ω, 33 Ω, 47 Ω | Series resistors on SCK, MOSI and SD CS |
+| R5 / R6 / R7 | 10k | Pull-ups on SD DO (MISO), DAT1, DAT2 |
+| R12 | 10k | Pull-up on the MCP3208 CS |
+| D2 / U3 / R8 | WS2812B, 74AHCT1G125, 330 Ω | Status LED, data from RX/GPIO3 level-shifted to 5 V |
+| Q1 / R4 / R3 | AOD4144, 100 Ω, 10k | Heater low-side switch, gate resistor, gate pull-down |
+| D1 | SS34 | Flyback across the heater |
+| F1 | 1.5 A hold PTC | Heater supply fuse |
+| J1 / J2 | Screw terminals | 12 V in / heater out |
+| J7 | 1×7 header | MCP3208 CH3–CH7 (spare, not used yet), +3V3, GND |
+
+**Power:** the logic (ESP8266, MCP3208, SD, LED) runs from the NodeMCU's USB. The 12 V input on J1 only feeds the heater. There is no 5 V regulator on this revision (see [PCB_REVISIONS.md](PCB_REVISIONS.md)), so keep USB connected.
 
 ### Sensors
-- **Voltage source** to measure (0-1 V scale in software, see Notes)
-- **PID Temp Sensor**: 100 kΩ NTC thermistor, β = 3950 K (Ender 3 compatible). Calibrated: R25 = 97.89 kΩ, B = 3910
-- **AUX Temp Sensor**: MF55 ultra-thin 10 kΩ NTC thermistor, β = 3950 K (B25/50). Calibrated: R25 = 10.63 kΩ, B = 4096
+- **PID Temp Sensor** (J4): 100 kΩ NTC thermistor, β = 3950 K (Ender 3 compatible)
+- **AUX Temp Sensor** (J5): MF55 ultra-thin 10 kΩ NTC thermistor, β = 3950 K (B25/50)
 
-The AUX series resistor is sized for resolution around 60-70 °C, where the 10k NTC measures about 2.5-1.8 kΩ. That gives ~9 ADC counts per °C (~0.11 °C per count); anything from 2.0 kΩ to 2.7 kΩ gives about the same there. With ~2 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can warm it by up to ~1.9 °C in still air (0.7 mW/°C), and less when it is pressed against a surface. A 2.7 kΩ resistor cuts that by about a quarter. `AUX_SERIES_RESISTOR` in `src/sensor_manager.cpp` must match the resistor fitted.
+The AUX series resistor (2 kΩ) is sized for resolution around 60-70 °C, where the 10k NTC measures about 2.5-1.8 kΩ. With ~2 kΩ the NTC dissipates ~1.4 mW at 65 °C, which can warm it by up to ~1.9 °C in still air (0.7 mW/°C), and less when it is pressed against a surface.
+
+| Resolution at 65 °C | Old board (A0, 10-bit) | PCB (MCP3208, 12-bit) |
+|---|---|---|
+| PID Temp Sensor | ~5 counts/°C | ~20 codes/°C |
+| AUX Temp Sensor | ~9.5 counts/°C | ~37 codes/°C |
 
 ### How the temperatures are calculated
-Both dividers run from the 3.3 V rail (measured 3.32 V). On NodeMCU / D1 mini boards, A0 goes through an onboard 220k/100k divider to the ESP8266's 1.0 V ADC. That has two effects, and the firmware models both:
-- **A0 full scale is 3.2 V**, not 3.3 V (ADC count 1024 = 3.2 V)
-- **A0 loads the selected divider with 320 kΩ.** This matters for the PID Temp Sensor (~50 kΩ divider impedance): its node is pulled ~14 % low. It barely affects the AUX Temp Sensor (~1.7 kΩ).
+Each NTC divider runs from +3V3, and the same +3V3 is the MCP3208's reference, so the reading is **ratiometric**:
+```
+code / 4096 = R_ntc / (Rs + R_ntc)      ->   R_ntc = Rs × code / (4096 − code)
+1/T = 1/298.15 + ln(R_ntc / R25) / B     (T in kelvin)
+```
+The rail voltage cancels out, and the MCP3208 input draws only nA, so there is no loading correction (the old board's A0 put 320 kΩ across the divider and needed a model for it). The 100 nF caps (C8/C9) hold each node steady while the ADC samples. A code ≥ 4094 means an open sensor (pulled up to +3V3 through Rs), a code ≤ 1 a short, and an NTC resistance above 20 × R25 (colder than about −30 °C) is also treated as open. All of these log -999, which trips the sensor-fault shutdown if the heater is on.
 
-Before this was modelled, the PID Temp Sensor read ~5 °C hot and the AUX Temp Sensor ~4 °C cold at room temperature. With it, they agree to within a few hundredths of a °C at room temperature.
-
-The circuit constants are in `src/sensor_manager.cpp`: `THERMISTOR_SUPPLY_VOLTAGE` (3.32), `ADC_FULL_SCALE_VOLTAGE` (3.2), `ADC_INPUT_RESISTANCE` (320000), the measured series resistors, and `ADC_CALIBRATION_GAIN` (leave at 1.0).
+The constants are in `src/sensor_manager.cpp`: `SERIES_RESISTOR` (R1), `AUX_SERIES_RESISTOR` (R2), and each sensor's R25 and B.
 
 ### Calibration
-Each thermistor's R25 and B are fitted from two reference points in stirred water, with both sensors suspended mid-depth: an ice bath (0 °C) and boiling water (95.7 °C, the boiling point at Salt Lake City's ~1300 m). The fitted values are in `src/sensor_manager.cpp`, with the datasheet values in comments:
+**The PCB is not calibrated yet.** The R25/B values in `src/sensor_manager.cpp` are the old board's fits (PID 97 886 Ω / 3910, AUX 10 631 Ω / 4096). Those fits also absorbed the old ESP8266 ADC's errors and its 320 kΩ load model, so on the PCB expect a degree or two of error until it is recalibrated:
 
-| Sensor | Ice bath | Boiling | Fitted R25 | Fitted B | Datasheet |
-|---|---|---|---|---|---|
-| PID | 660.8 counts | 77.7 counts | 97 886 Ω | 3910 | 100 kΩ / 3950 |
-| AUX | 1002.5 counts | 293.1 counts | 10 631 Ω | 4096 | 10 kΩ / 3950 |
-
-With datasheet values the PID sensor read +0.6 °C in ice and 95.5 °C at boiling, and the AUX sensor −2.0 °C and 96.8 °C. A single ADC gain can't fix both, because the errors have opposite signs. That's why the calibration is per sensor.
-
-To recalibrate (new thermistor, new resistor, or a different boiling point), average the raw counts and refit:
+1. With the board unpowered and the sensors unplugged, measure R1 and R2 and set `SERIES_RESISTOR` / `AUX_SERIES_RESISTOR`.
+2. Log with **Average** on in a stirred ice bath (0 °C) and in boiling water (~95.7 °C at Salt Lake City's ~1300 m), both sensors suspended mid-depth.
+3. Average each settled stretch and fit:
 ```
-python3 tools/calibrate_thermistors.py --average data_N.log          # mean counts from a log or serial capture
-python3 tools/calibrate_thermistors.py --elevation 1300              # boiling point for your elevation
-python3 tools/calibrate_thermistors.py --point 0:660.8:1002.5 --point 95.7:77.7:293.1
+python3 tools/calibrate_thermistors.py --average ice.log --timeline       # find the flat part
+python3 tools/calibrate_thermistors.py --average ice.log --from 120 --to 300
+python3 tools/calibrate_thermistors.py --elevation 1300                   # boiling point for your elevation
+python3 tools/calibrate_thermistors.py --point 0:PID:AUX --point 95.7:PID:AUX
 ```
-The tool reads the circuit constants from `src/sensor_manager.cpp` and prints the new R25/B lines. The fit only holds for the circuit constants and resistors it was made with. Change any of them and you need to recalibrate.
+The tool reads the series resistors from `src/sensor_manager.cpp`, checks the log's `adc_fs` column so old 10-bit logs aren't mixed in, and prints the new R25/B lines.
 
-Between those two points the ESP8266 ADC is not linear: a multimeter check at ~45 °C found it reading ~1.7 % high at mid-scale and only ~0.6 % high near full scale. A two-point fit can't follow that, so the hotplate correction below takes out what remains.
+The MCP3208 is linear (±1 LSB), unlike the ESP8266 ADC (~1.7 % high at mid-scale), so a two-point fit should hold much better between the points than it did on the old board.
 
-### Hotplate correction
-After the Beta equation, each reading is corrected by subtracting an error looked up from the reading itself (linear interpolation between points, no correction outside 0–95.7 °C). The tables come from a hotplate sweep (2026-10-28): both sensors side by side on the plate surface under Kapton tape in thermal compound, 20 setpoints from 29 °C to 84 °C, referenced to the hotplate's displayed temperature and smoothed (the display reads whole degrees). Ice and boiling water stay exact.
+### Hotplate correction (off on the PCB)
+`PID_CORRECTION` / `AUX_CORRECTION` in `src/sensor_manager.cpp` are the old board's hotplate tables (2026-10-28). Part of what they corrected was the ESP8266 ADC's non-linearity, which the PCB doesn't have, so `APPLY_TEMPERATURE_CORRECTION` is `false`. Re-measure on the PCB after the ice/boiling calibration and turn it back on only with new tables. The difference between the PID and AUX sensors in use (e.g. 67 °C on the sheet against 54.5 °C on the sample) is heat flow through the sapphire, not ADC error, so it will not go away with the new ADC.
 
-| Reading (°C) | 0 | 30 | 40 | 50 | 55 | 60 | 65 | 70 | 75 | 80 | 85 | 95.7 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| PID correction | 0 | 2.29 | 2.01 | 1.61 | 1.33 | 1.06 | 0.95 | 1.01 | 1.13 | 1.23 | 1.25 | 0 |
-| AUX correction | 0 | 3.99 | 3.87 | 3.61 | 3.39 | 3.13 | 2.95 | 2.86 | 2.80 | 2.74 | 2.67 | 0 |
+**Accuracy:** until the PCB is recalibrated, treat absolute temperatures as about ±2 °C. The old board reached about ±1.5 °C absolute and a few tenths of a °C between the two sensors.
 
-`PID_CORRECTION` / `AUX_CORRECTION` in `src/sensor_manager.cpp` hold these values. `APPLY_TEMPERATURE_CORRECTION = false` turns the correction off.
+### Status LED (WS2812B)
+| LED | Meaning |
+|---|---|
+| Off | Heater off (no PID, no manual power) |
+| Blue → red | Heater on: blue = 0 % PWM, red = 100 %, purple in between |
+| Flashing orange | Emergency shutdown: the heater ran longer than `MAX_HEATER_TIME` (6 h) |
+| Flashing yellow | Emergency shutdown for any other reason (over-temperature, sensor fault, watchdog) |
 
-**Accuracy:**
-- **Between the two sensors: a few tenths of a °C.** Before the correction AUX read 1.87 ± 0.24 °C above PID at every hotplate step, and in the 45 °C water test. After it, both match the hotplate to 0.35 °C RMS (worst 0.9 °C) over 29–84 °C.
-- **Absolute: about ±1.5 °C**, limited by the hotplate as a reference. Ice and boiling water agree with the corrected readings, but a multimeter check in water at ~45 °C pointed 2–4 °C higher than the hotplate scale. The hotplate could not be cross-checked before it was returned.
-- `tools/calibrate_thermistors.py` fits only the Beta part (R25/B). Its "now reads" values don't include this correction.
-
-If you add a filter capacitor on C1 or C2, the node no longer sees the full 320 kΩ load at the moment of the sample. Set `ADC_INPUT_RESISTANCE` to ~960000 (320k × 3 channels) and recalibrate.
-
-An NTC resistance above 20 × R25 (colder than about -30 °C) is treated as an open sensor, and an ADC reading at full scale (1023-1024) as unknown; both log -999. This matters for the PID Temp Sensor: because of the 320 kΩ load, a disconnected PID thermistor reads ~2.54 V (ADC ~813) rather than near the rail. Without this check it would read as a cold temperature and the PID would heat at full power. Returning -999 trips the sensor-fault shutdown instead.
-
-### Heater
-- **AOD4144** N-channel logic-level MOSFET (low-side switch)
-- **10 kΩ** gate pull-down resistor
-- **12 V heater element** and a 12 V supply
+The LED is on RX/GPIO3, so the serial port is output-only (`SERIAL_TX_ONLY`); the serial monitor still works. It may flicker random colours while the board is being flashed. Brightness is `LED_BRIGHTNESS` in `src/status_led.cpp`.
 
 ## Wiring Overview
 
 ```
-ESP8266        Connected to          Function
--------        ------------          --------
-A0             Mux COM               Analog input
-D0 (GPIO16)    MOSFET gate           Heater PWM
-D1 (GPIO5)     Mux S0                Channel select bit 0
-D2 (GPIO4)     Mux S1                Channel select bit 1
-D3 (GPIO0)     Mux S2                Channel select bit 2
-D4 (GPIO2)     Mux S3                Channel select bit 3
-D5 (GPIO14)    SD SCK                SPI clock
-D6 (GPIO12)    SD MISO               SPI data in
-D7 (GPIO13)    SD MOSI               SPI data out
-D8 (GPIO15)    SD CS                 SPI chip select
-3V3            Mux VCC + EN, SD VCC, both thermistor dividers
-GND            Mux, SD, MOSFET source, 12 V supply ground
+NodeMCU        PCB net               Function
+-------        -------               --------
+D0 (GPIO16)    HEATER_PWM            Q1 gate via R4 100 Ω (R3 10k pull-down)
+D1 (GPIO5)     ADC_CS                MCP3208 /CS (R12 10k pull-up)
+D2, D3, D4     -                     Not connected (D3/D4 are boot pins; left floating)
+D5 (GPIO14)    SPI_SCK               R9 33 Ω -> MCP3208 CLK + SD CLK
+D6 (GPIO12)    SD_MISO               MCP3208 DOUT + SD DO (R5 10k pull-up)
+D7 (GPIO13)    SPI_MOSI              R10 33 Ω -> MCP3208 DIN + SD CMD
+D8 (GPIO15)    SD CS                 R11 47 Ω -> SD DAT3/CS
+RX (GPIO3)     LED_DATA              U3 74AHCT1G125 -> R8 330 Ω -> WS2812B DIN
+TX (GPIO1)     -                     USB serial output only
+A0             -                     Not connected
+3V3            +3V3                  MCP3208 VDD/VREF, SD, NTC dividers, J7
+VIN            +5V_VIN               WS2812B, U3 (5 V from USB through the NodeMCU)
 
-Mux channels:
-  C0 -> voltage source
-  C1 -> PID Temp Sensor: 3.3V --[100k, meas. 98k]-- C1 --[100k NTC]-- GND
-  C2 -> AUX Temp Sensor: 3.3V --[2.0k]------------- C2 --[10k NTC]--  GND
+MCP3208 channels:
+  CH0      not connected (floating: never logged)
+  CH1  ->  PID Temp Sensor: +3V3 --[R1 100k]-- CH1 --[100k NTC on J4]-- GND   (C8 100 nF to GND)
+  CH2  ->  AUX Temp Sensor: +3V3 --[R2 2k]---- CH2 --[10k NTC on J5]--- GND   (C9 100 nF to GND)
+  CH3-7 -> J7 pins 5..1 (reversed: J7 pin 1 = CH7), spare
 ```
 
-See [WIRING_GUIDE.md](WIRING_GUIDE.md) for the full diagram, heater circuit and checks.
+See [WIRING_GUIDE.md](WIRING_GUIDE.md) for connectors, the heater circuit and bring-up checks.
 
 ## Software Setup
 
 ### PlatformIO (recommended)
 ```bash
 pip install platformio
-make deploy                   # build + upload firmware + upload web page + open monitor (NodeMCU)
-make deploy ENV=wemos_d1_mini # same for a Wemos D1 mini
+make deploy                   # build + upload firmware + upload web page + open monitor
 ```
 
 Or step by step:
 ```bash
-pio run -e esp8266 -t upload       # firmware (use -e wemos_d1_mini for a D1 mini)
+pio run -e esp8266 -t upload       # firmware
 pio run -e esp8266 -t uploadfs     # web pages (data/ folder: main page, /tune, /program)
 pio device monitor -b 115200
 ```
@@ -132,8 +140,9 @@ Both steps are needed: the firmware and the web page are uploaded separately.
 - ESP8266 Arduino core (ESP8266WiFi, ESP8266WebServer, SD, SPI, LittleFS, Ticker)
 - ArduinoJson ^7.0.0
 - WebSockets ^2.4.0 (Markus Sattler)
+- NeoPixelBus ^2.8.0 (Makuna), for the status LED
 
-PlatformIO installs the two external libraries automatically from `platformio.ini`.
+PlatformIO installs the external libraries automatically from `platformio.ini`.
 
 ### What the two storage areas hold
 | Storage | Holds | How it gets there |
@@ -161,67 +170,69 @@ Sensor data is never stored in internal flash.
 Each boot creates a new file: `data.log`, then `data_1.log`, `data_2.log`, ... When a file reaches 50 MB, logging continues in the next free name. Every file starts with the CSV header: if the current log file is deleted while the board is running, the next write recreates it with a header. The files are CSV text:
 
 ```csv
-timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control,step
-64659,0.016602,20.404,0,45.00,0.00,17,486,1.5188,0,2.200,0.250,0.150,20.928,895,2.7969,1,0,0
-259599,0.016602,40.939,1,45.00,9.08,17,312,0.9750,1,2.250,0.320,0.240,39.606,746,2.3312,1,0,0
-3391012,0.017422,42.844,0,45.00,0.00,17.84,298.41,0.9325,0,2.200,0.250,0.150,42.821,717.53,2.2423,32,0,0
+timestamp,voltage,temperature,heater_state,target_temp,pid_output,voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,aux_temp,aux_adc,aux_v,samples,control,step,adc_fs
+64659,0.000000,20.404,0,45.00,0.00,0,2236,1.8123,0,2.300,0.045,0.000,20.928,3545,2.8731,1,0,0,4096
+259599,0.000000,40.939,1,45.00,9.08,0,1371,1.1113,1,2.300,0.045,0.000,39.606,3018,2.4459,1,0,0,4096
+3391012,0.000000,42.844,0,45.00,0.00,0.00,1303.47,1.0565,0,2.300,0.045,0.000,42.821,2908.50,2.3575,32,0,0,4096
 ```
-The first two rows are raw (`samples` = 1). The third is an averaged row (32 sample cycles), so its ADC columns are mean counts with 2 decimals.
+The first two rows are raw (`samples` = 1). The third is an averaged row (32 sample cycles), so its ADC columns are mean codes with 2 decimals.
 
 | # | Column | Unit | Description |
 |---|---|---|---|
 | 1 | timestamp | ms | `millis()` since boot, taken at the PID Temp Sensor sample |
-| 2 | voltage | V | Channel 0, `voltage_adc`/1024 (6 decimals) |
-| 3 | temperature | °C | **PID Temp Sensor**, channel 1 (3 decimals, -999 = open/short) |
+| 2 | voltage | V | Always 0 on the PCB (no voltage input). Kept so scripts for the old logs still parse |
+| 3 | temperature | °C | **PID Temp Sensor**, MCP3208 CH1 (3 decimals, -999 = open/short) |
 | 4 | heater_state | 0/1 | 1 if heater PWM duty > 0 |
 | 5 | target_temp | °C | PID setpoint |
 | 6 | pid_output | % | Heater PWM duty (PID output, or 100 in manual ON) |
-| 7 | voltage_adc | counts | ADC reading for channel 0 (0-1023). Mean of the row's sample cycles when averaged (2 decimals) |
-| 8 | thermistor_adc | counts | ADC reading for channel 1, PID Temp Sensor (0-1023). Mean when averaged |
-| 9 | thermistor_v | V | PID Temp Sensor voltage at A0, `thermistor_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `temperature` is calculated from. |
+| 7 | voltage_adc | codes | Always 0 on the PCB (kept for the column layout) |
+| 8 | thermistor_adc | codes | MCP3208 code for CH1, PID Temp Sensor (0-4095). Mean of the row's sample cycles when averaged (2 decimals) |
+| 9 | thermistor_v | V | PID Temp Sensor node voltage, `thermistor_adc`/4096 × 3.32 (4 decimals). For reference only: the temperature is calculated ratiometrically from the code, not from this |
 | 10 | pid_enabled | 0/1 | 1 if the PID was controlling the heater, 0 for manual ON/OFF. Tells PID-at-100% apart from manual ON. |
 | 11 | kp | - | PID proportional gain in effect (3 decimals) |
 | 12 | ki | - | PID integral gain in effect |
 | 13 | kd | - | PID derivative gain in effect |
-| 14 | aux_temp | °C | **AUX Temp Sensor**, channel 2 (3 decimals, -999 = open/short or not connected) |
-| 15 | aux_adc | counts | ADC reading for channel 2, AUX Temp Sensor (0-1023). Mean when averaged |
-| 16 | aux_v | V | AUX Temp Sensor voltage at A0, `aux_adc`/1024 × 3.2 × `ADC_CALIBRATION_GAIN` (4 decimals). This is the exact value `aux_temp` is calculated from. |
+| 14 | aux_temp | °C | **AUX Temp Sensor**, MCP3208 CH2 (3 decimals, -999 = open/short or not connected) |
+| 15 | aux_adc | codes | MCP3208 code for CH2, AUX Temp Sensor (0-4095). Mean when averaged |
+| 16 | aux_v | V | AUX Temp Sensor node voltage, `aux_adc`/4096 × 3.32 (4 decimals), for reference |
 | 17 | samples | cycles | Sample cycles in the row: 1 = raw, N = averaged (see Averaging) |
 | 18 | control | 0/1 | Sensor the PID controls: 0 = PID Temp Sensor, 1 = AUX Temp Sensor. `target_temp` applies to it |
 | 19 | step | - | Setpoint program step (1-100) when the row was sampled; 0 = no program running |
+| 20 | adc_fs | codes | ADC full scale for the `*_adc` columns: 4096 (MCP3208). Old-board logs have no `adc_fs` column and are 0-1023 |
 
-Columns 1-6 are the original format. Columns 7-19 were added after them, so scripts that read by column name keep working.
+Columns 1-6 are the original format. Columns 7-20 were added after them, so scripts that read by column name keep working. To tell old and new logs apart, check for the `adc_fs` column.
 
-A raw row is one pass over channels 0 → 1 → 2, so its three readings are taken within ~4 ms of each other.
+A raw row is one conversion of CH1 and one of CH2, taken back to back (~30 µs apart).
 
 ### Averaging (oversampling)
 The **Average** checkbox under Data Logging Control sets what each row holds:
 - **Off (default):** every sample cycle is logged raw, as above, up to ~167 rows/s. `samples` = 1.
-- **On:** N consecutive sample cycles (default 32, settable 2-100 next to the checkbox) are combined into one row. The ADC counts are averaged, and `temperature`, `aux_temp`, `voltage` and the `*_v` columns are calculated from the mean counts. Averaging the counts (not the temperatures) lets the ADC noise resolve fractions of a count, as with the boiling-water mean of 77.73. `timestamp` is the middle of the window. `heater_state`, `pid_output`, `target_temp` and `pid_enabled` are from the last cycle in it. `samples` = N.
+- **On:** N consecutive sample cycles (default 32, settable 2-100 next to the checkbox) are combined into one row. The ADC codes are averaged, and `temperature`, `aux_temp` and the `*_v` columns are calculated from the mean codes. Averaging the codes (not the temperatures) lets the ADC noise resolve fractions of a code. `timestamp` is the middle of the window. `heater_state`, `pid_output`, `target_temp` and `pid_enabled` are from the last cycle in it. `samples` = N.
 
-With N = 32 a row covers ~0.2 s, at up to ~5 rows/s. Averaging improves resolution and noise, but not accuracy: the ±1.5 °C absolute accuracy (see Calibration) still applies. The setting can change while logging (a partly filled average is dropped), and it resets to off at boot. The PID and the safety checks use the latest logged row, so with averaging on they also see averaged temperatures. `/averaging?enabled=1&n=32` sets it over HTTP, and `/status` reports `averagingEnabled` and `averageSamples`.
+With N = 32 a row covers ~0.2 s, at up to ~5 rows/s. Averaging improves resolution and noise, but not accuracy (see Calibration). The setting can change while logging (a partly filled average is dropped), and it resets to off at boot. It only affects the log: the PID always uses its own average of every sample cycle (see Sampling). `/averaging?enabled=1&n=32` sets it over HTTP, and `/status` reports `averagingEnabled` and `averageSamples`.
 
-**Checking the temperatures:** with VS = 3.32 V and RL = 320 kΩ (the A0 load), both use:
+**Checking the temperatures:** both use the ratiometric formula from "How the temperatures are calculated":
 ```
-P = Rs × V / (VS − V)        resistance below the node (NTC in parallel with RL)
-R = P × RL / (RL − P)        NTC resistance
+R = Rs × code / (4096 − code)
 1/T = 1/298.15 + ln(R/R25)/B      (T in kelvin)
 ```
-- PID Temp Sensor: V = `thermistor_v`, Rs = 98 kΩ, R25 = 97 886 Ω, B = 3910
-- AUX Temp Sensor: V = `aux_v`, Rs = 2.0 kΩ, R25 = 10 631 Ω, B = 4096
+- PID Temp Sensor: code = `thermistor_adc`, Rs = `SERIES_RESISTOR`, R25 / B = `THERMISTOR_NOMINAL` / `B_COEFFICIENT`
+- AUX Temp Sensor: code = `aux_adc`, Rs = `AUX_SERIES_RESISTOR`, R25 / B = `AUX_THERMISTOR_NOMINAL` / `AUX_B_COEFFICIENT`
 
-then subtract the hotplate correction for that reading (see Calibration). That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C. Logs written before the 2026-10-25 calibration used R25 = 100 kΩ / 10 kΩ and B = 3950. The raw counts let you redo either conversion with a different calibration.
+That reproduces `temperature` and `aux_temp` to within a few thousandths of a °C (plus the hotplate correction, if it is ever turned back on). The raw codes let you redo the conversion with a later calibration.
 
-**Older log files** (before the circuit model was added) used V = adc/1024 × 3.3, R = 100k × V / (3.3 − V) with no A0 load, and `thermistor_v` / `aux_v` on that 3.3 V scale. Recalculate their temperatures from `thermistor_adc` and `aux_adc` with the formulas above.
+**Old-board logs** (no `adc_fs` column) are 10-bit A0 counts read through the 320 kΩ A0 load. Convert them with the formulas in the `main` branch's README, not these.
 
 **Gains:** the kp/ki/kd columns hold the gains when the row was sampled. Changing them with `/pid/params` saves the buffered rows first, so rows never show gains they weren't sampled under. The serial monitor warns if that save fails.
 
-With averaging off, the maximum rate is about 97 bytes × 167 rows/s ≈ 58 MB per hour, so a new 50 MB file starts about every 52 minutes. With averaging on at N = 32 it is about 2 MB per hour.
+With averaging off, the maximum rate is about 110 bytes × 167 rows/s ≈ 66 MB per hour (a 6 h program ≈ 400 MB, in 50 MB files). With averaging on at N = 32 it is about 2 MB per hour, which is the better choice for long runs.
 
 ## Technical Details
 
 ### Sampling
-- One ADC read every 2 ms, cycling channels 0 → 1 → 2: up to ~167 readings/s per channel and ~167 CSV rows/s (one row per cycle), or ~167/N rows/s with averaging on
+- One sample cycle every 6 ms: one MCP3208 conversion of each sensor (~60 µs at 1 MHz SPI). Up to ~167 cycles/s, so ~167 CSV rows/s raw, or ~167/N rows/s with averaging on
+- Sampling runs all the time, logging or not. Each cycle updates the live readings used by the safety checks, and is added to the PID's input average
+- **PID input:** every PID update (500 ms) uses the mean of all the cycles since the last one (~83), which cuts the noise ~9× against a single sample. A window that contains an open/shorted reading counts as a sensor fault rather than being averaged in. Logging faster would not help the PID: the plant responds over seconds to minutes, so the row rate is set by SD card space instead
 - 50-row RAM buffer, appended to the SD card when full
 - WebSocket update every 500 ms
 - Real rates are a little lower because sampling pauses during SD writes and the 1 s debug print
@@ -247,7 +258,7 @@ With averaging off, the maximum rate is about 97 bytes × 167 rows/s ≈ 58 MB p
 | Max safe temperature | 130 °C |
 | Max continuous heater time | 6 h (`MAX_HEATER_TIME`) |
 
-The PID uses the latest logged reading, or reads the sensors directly when the buffer is empty, so it works with logging on or off. Its output (0-100%) sets the PWM duty directly.
+The PID uses the mean of the sample cycles since its last update (or a 16-conversion direct read if none came in), so it works the same with logging on or off. Its output (0-100%) sets the PWM duty directly. The ADC resolution and noise floor are better than on the old board, so re-run a `/tune` step test on the PCB; the old gains are a reasonable start.
 
 ### Choosing the control sensor
 The **Control sensor** setting under Temperature Control picks which thermistor the PID holds at the setpoint. You can switch at any time without an upload, so you can try either location for a sample.
@@ -286,12 +297,13 @@ Safety during tests: the heater turns off if the sheet passes 120 °C, the PID s
 Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint?sp=80,90,95&hold=&kp=&ki=&kd=` (hold 1–15 min, at most 54 min in total), `/tune/stop`, `/tune/status`, `/tune/data?from=`, `/pid/save`, `/pid/sensor?s=pid|aux&limit=`.
 
 ### Safety
-- Over-temperature (> 130 °C) and sensor-fault shutdown, based on the PID Temp Sensor. These checks use the latest logged reading, so they only run while logging is on. Keep logging running whenever the heater is on. The AUX Temp Sensor does not trigger a shutdown, but while it is the control sensor a fault on it stops the PID and turns the heater off.
+- Over-temperature (> 130 °C) and sensor-fault shutdown, based on the PID Temp Sensor's live sample (every 6 ms). These now run whether or not logging is on (on the old board they only ran while logging). The AUX Temp Sensor does not trigger a shutdown, but while it is the control sensor a fault on it stops the PID and turns the heater off.
 - 6-hour continuous-heating limit (`MAX_HEATER_TIME`, Ticker every 500 ms). Under PID the duty rarely drops to 0%, so heating for longer than 6 hours reaches this limit and shuts down. Raised from 30 min (then 1 h, then 3 h) for long setpoint programs (e.g. ~70 half-degree steps of 5 min up and back down). The main page, `/program` and the boot message all read it from the firmware.
 - Software watchdog (checked every 8 s) + ESP hardware watchdog
 - Logging auto-stops when free heap < 8 KB
 - On shutdown the heater PWM goes to 0, PID and logging stop, and any open log file is closed
-- After a shutdown, use **System Reset** (`/system/reset`). It is refused if the temperature is ≥ 120 °C or the sensor is faulty. It also clears the RAM buffer so old readings can't re-trigger a shutdown. See [RESET_BUFFER_FIX.md](md_info_docs/RESET_BUFFER_FIX.md).
+- The status LED flashes orange after a heater timeout and yellow after any other shutdown. `/status` reports `emergencyShutdown` and `shutdownReason`, and the serial debug print shows the reason.
+- After a shutdown, use **System Reset** (`/system/reset`). It is refused if the temperature is ≥ 120 °C or the sensor is faulty. It also clears the RAM buffer and replaces the live reading with a fresh one, so old readings can't re-trigger a shutdown. See [RESET_BUFFER_FIX.md](md_info_docs/RESET_BUFFER_FIX.md).
 
 ### Network / API
 | Route | Action |
@@ -302,7 +314,7 @@ Endpoints: `/tune/step?p1=&p2=&max=` (max 3–20 min per phase), `/tune/setpoint
 | `/pid/sensor?s=pid\|aux&limit=` | Select the control sensor and/or the sheet limit; returns the gains now in use |
 | `/program` | Setpoint program page; runs via `/program/start?steps=60:10,61,62:5&hold=10&end=off\|hold&stoplog=1`, `/program/stop`, `/program/status`, `/program/steps` (current list), `/program/saved` (last list started) |
 | `/start`, `/stop` | Start / stop logging (`/start` returns 503 if no log file can be created) |
-| `/status` | One-shot JSON reading and settings: `temperature` (PID Temp Sensor), `auxTemperature` (AUX Temp Sensor), raw ADC counts and divider voltages |
+| `/status` | One-shot JSON reading (16 conversions per sensor) and settings: `temperature` (PID Temp Sensor), `auxTemperature` (AUX Temp Sensor), raw MCP3208 codes, divider voltages, `emergencyShutdown`, `shutdownReason` |
 | `/logs` | JSON list of log files `{name, size}` |
 | `/data.csv` | Download the current log file (flushes the RAM buffer first) |
 | `/data.csv?file=<name>` | Download a specific log file |
@@ -322,7 +334,8 @@ HTTP on port 80, WebSocket on port 81, AP IP 192.168.4.1.
 ```
 src/
 ├── main.cpp               # setup(), loop(), sensor sampling, debug stats
-├── sensor_manager.*       # mux control, PID/AUX thermistor conversion and constants
+├── sensor_manager.*       # MCP3208 SPI reads, PID/AUX thermistor conversion and constants
+├── status_led.*           # WS2812B status LED (NeoPixelBus, GPIO3)
 ├── data_manager.*         # RAM buffer, SD card, log files, rotation, write timeouts
 ├── heater_controller.*    # PWM output, PID, heater safety checks
 ├── safety_system.*        # Ticker safety check, watchdog, emergency shutdown
@@ -343,11 +356,11 @@ Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_inter
 ## Troubleshooting
 
 ### "SD card initialization failed" / "SD card not found"
-- Check the SPI wiring: CS=D8, MOSI=D7, MISO=D6, SCK=D5, VCC=3.3 V
+- Push the card fully into J6 until it clicks (push-push socket; there is no card-detect, so the firmware can't tell it is missing)
 - Format the card FAT32 (or FAT16 for ≤ 2 GB)
-- Make sure the module works at 3.3 V
-- If the board won't boot with the SD module attached, D8 (GPIO15) must be LOW at power-up
+- If the board won't boot with a card in, D8 (GPIO15) must be LOW at power-up: check the NodeMCU's own pull-down on D8
 - If the card wasn't ready at boot, insert it and press Start Logging, or reboot
+- If temperatures go wrong only after SD writes, the card is holding the shared MISO line: try another card
 
 ### "Slow SD write" or "Write timeout" in the serial monitor
 - Use a faster card (Class 10 / UHS-1) and reformat it FAT32
@@ -361,8 +374,9 @@ Debug output is set per file: `main.cpp`, `heater_controller.cpp` and `web_inter
 - Check for an active emergency shutdown in the serial monitor, and use System Reset
 
 ### Temperature reads N/A or -999
-- PID Temp Sensor: check the divider on C1. At 25 °C it is ~1.68 V unloaded, ~1.45 V while the ESP8266 samples it (a meter shows something in between). A disconnected PID thermistor reads -999 and trips the sensor-fault shutdown if the heater is on.
-- AUX Temp Sensor: check the divider on C2 (~2.75 V at 25 °C, ~1.7 V at 65 °C). With nothing connected to C2 it reads N/A, and logging continues.
+- PID Temp Sensor: measure the top pad of C8. At 25 °C it is ~1.64 V; with nothing plugged into J4 it is ~3.3 V (code ~4095, logged as -999). A disconnected PID thermistor trips the sensor-fault shutdown if the heater is on.
+- AUX Temp Sensor: measure C9 (~2.79 V at 25 °C, ~1.7 V at 65 °C). With nothing on J5 it reads N/A, and logging continues.
+- Both -999 at once: check the MCP3208 (3.3 V on U2 pins 15/16, CS on D1). The boot message prints the raw codes of both channels.
 
 ### PID and AUX Temp Sensors disagree
 - They measure different spots, so some difference is expected. In air the AUX Temp Sensor also self-heats by ~1 °C at room temperature (calibration was done in water, where self-heating is negligible), so it reads high there. To check the calibration, put both sensors in the same stirred water: they should agree within a few tenths of a °C. If they don't, check `AUX_SERIES_RESISTOR` matches the resistor fitted and recalibrate (see Calibration).
@@ -371,9 +385,9 @@ For PlatformIO install/build problems, see [TROUBLESHOOTING.md](md_info_docs/TRO
 
 ## Notes
 
-- The voltage channel is scaled as ADC/1024 (0-1 V). On NodeMCU / D1 mini boards, A0 has an onboard divider that makes its range 0-3.2 V, so the logged value is the actual voltage ÷ 3.2. The thermistor conversions model this (see "How the temperatures are calculated"). Because `voltage_adc` is logged, the actual voltage can be recovered afterwards (`voltage_adc` / 1024 × 3.2 on those boards).
+- The PCB has no voltage input. The `voltage` and `voltage_adc` columns are still written (as 0) so analysis scripts written for the old logs keep working.
 - Timestamps restart at 0 on each boot. Each boot also starts a new log file.
-- Further guides and change notes from earlier versions (relay control, internal-flash logging) are in `md_info_docs/`. Each change note starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current firmware.
+- Further guides and change notes from earlier versions (relay control, internal-flash logging) are in `md_info_docs/`. Each change note starts with a note saying what has changed since. This README, WIRING_GUIDE.md and config.h describe the current (PCB) firmware; the other notes in `md_info_docs/` mostly describe the old board.
 
 ## License
 

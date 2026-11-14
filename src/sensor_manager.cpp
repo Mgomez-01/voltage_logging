@@ -1,87 +1,85 @@
 #include "sensor_manager.h"
+#include <SPI.h>
 #include <math.h>
 
-// Multiplexer control pins (CD74HC4067)
-const int MUX_S0 = 5;  // D1
-const int MUX_S1 = 4;  // D2
-const int MUX_S2 = 0;  // D3
-const int MUX_S3 = 2;  // D4
+// PCB version (pcb_voltage_logging): both thermistors are read by an MCP3208
+// 12-bit SPI ADC (U2). It shares SCK/MISO/MOSI (D5/D6/D7) with the SD card;
+// each has its own chip select (ADC: D1/GPIO5, SD: D8/GPIO15).
 
-// Sensor channels on multiplexer
-const int VOLTAGE_CHANNEL = 0;        // Channel 0: voltage measurement
-const int THERMISTOR_CHANNEL = 1;     // Channel 1: PID Temp Sensor (sheet; default control sensor, safety checks)
-const int AUX_THERMISTOR_CHANNEL = 2; // Channel 2: AUX Temp Sensor (sample; PID can control on it if selected)
+const int ADC_CS_PIN = 5;                    // D1 / GPIO5 -> MCP3208 /CS (pin 10), 10k pull-up R12
 
-// ADC pin
-const int ADC_PIN = A0;
+// MCP3208 channels. CH0 is not connected (floating: never log it as data).
+// CH3-CH7 go to the J7 spare header, wired in reverse (J7 pin 1 = CH7 ...
+// pin 5 = CH3); not used yet.
+const int THERMISTOR_CHANNEL = 1;            // CH1: PID Temp Sensor (sheet; default control sensor, safety checks)
+const int AUX_THERMISTOR_CHANNEL = 2;        // CH2: AUX Temp Sensor (sample; PID can control on it if selected)
+
+const float ADC_COUNTS = 4096.0;             // MCP3208: code = 4096 * Vin / Vref
+
+// The MCP3208's maximum clock is 1 MHz at 2.7 V supply (2 MHz at 5 V); at
+// 3.3 V stay at 1 MHz. The SD library uses its own (faster) settings, and each
+// device gets its own SPI transaction, so the two never interfere.
+static const SPISettings MCP3208_SPI(1000000, MSBFIRST, SPI_MODE0);
 
 // ---------------------------------------------------------------------------
-// Measurement circuit (shared by both thermistor channels)
+// Measurement circuit (same for both thermistor channels)
 //
-//   VS ---[Rs]---+--- mux --- A0 ---[220k]---+--- ESP8266 ADC (0-1.0 V)
-//                |                           |
-//              [NTC]                       [100k]
-//                |                           |
-//               GND                         GND
+//   +3V3 ---[Rs]---+--- MCP3208 CHn          MCP3208 VREF = VDD = +3V3
+//                  |
+//            [NTC] + [100 nF] (C8 / C9)
+//                  |
+//                 GND
 //
-// The NodeMCU / Wemos D1 mini board has a 220k/100k divider in front of the
-// ESP8266's 1.0 V ADC. That makes A0's full scale 3.2 V (not 3.3 V), and it
-// puts a 320k load on whichever divider the mux has selected. Both effects are
-// modelled below; ignoring them made the PID sensor read ~5 °C hot and the AUX
-// sensor ~4 °C cold at room temperature.
+// Ratiometric: the divider and the ADC reference are the same +3V3, so
+//   code / 4096 = R_ntc / (Rs + R_ntc)
+// and the rail voltage cancels out. The MCP3208 input draws only nA (no
+// loading correction, unlike the old A0 input's 320k). The 100 nF caps hold
+// the node steady while the ADC samples (time constant ~5 ms for the PID
+// sensor at 25 °C, ~0.2 ms for AUX), so no settling delay is needed.
 // ---------------------------------------------------------------------------
-const float THERMISTOR_SUPPLY_VOLTAGE = 3.32;  // VS: measured rail feeding both dividers (V)
-const float ADC_FULL_SCALE_VOLTAGE = 3.2;      // A0 voltage that reads 1024 (220k/100k board divider)
-const float ADC_INPUT_RESISTANCE = 320000.0;   // Board divider seen from A0 (220k + 100k), loads the
-                                               // selected divider. Without a capacitor on C1/C2 the
-                                               // load applies at the moment of the sample. If you add
-                                               // a filter capacitor on C1/C2, the node averages instead:
-                                               // use ~960000 (320k x 3 channels) and recalibrate.
-const float ADC_CALIBRATION_GAIN = 1.0;        // Multiplier on the A0 voltage. Leave at 1.0: the ice
-                                               // bath errors had opposite signs on the two sensors, so
-                                               // one gain can't fix both. Calibration is done per sensor
-                                               // with R25/B below instead (tools/calibrate_thermistors.py).
-                                               // Changing this invalidates that calibration.
+const float THERMISTOR_SUPPLY_VOLTAGE = 3.32;  // +3V3 rail, only used for the logged thermistor_v / aux_v
 
-// Readings beyond these limits mean an open or shorted sensor, and return -999
-// so the safety system's sensor-fault check sees them. Because of the 320k load,
-// a disconnected PID thermistor reads ~2.54 V (ADC ~813), never near the rail,
-// so "open" is detected as an implausibly high NTC resistance instead.
-const int ADC_SATURATED = 1023;                // ADC at/near full scale: can't tell the value (AUX open, or < ~-11 °C)
-const float NTC_OPEN_RATIO = 20.0;             // R > 20 x R25 (colder than ~-30 °C) = open sensor
+// Readings at these limits mean an open or shorted sensor, and return -999 so
+// the safety system's sensor-fault check sees them. An open sensor is pulled
+// to +3V3 through Rs and reads ~4095; a shorted one reads ~0.
+static const float ADC_SHORTED = 1;          // code <= 1: shorted NTC
+static const float ADC_SATURATED = 4094;     // code >= 4094: open NTC
+static const float NTC_OPEN_RATIO = 20.0;    // R > 20 x R25 (colder than ~-30 °C) = open sensor
 
-// Thermistor calibration (2026-10-25): R25 and B below are fitted, not datasheet
-// values. Two points in stirred water with both sensors suspended mid-depth:
-//   ice bath 0.0 °C:          PID 660.8 counts, AUX 1002.5 counts
-//   boiling water 95.7 °C:    PID  77.7 counts, AUX  293.1 counts
-//   (boiling point for Salt Lake City, ~1300 m; settled plateau of data_4.log)
-// Refit with: python3 tools/calibrate_thermistors.py --point 0:660.8:1002.5 --point 95.7:77.7:293.1
-// Between the two points the ESP8266 ADC is non-linear (~1.7 % high at
-// mid-scale, ~0.6 % near full scale), which a two-point fit can't follow; the
-// hotplate correction tables below take out what remains.
-// The fits absorb the thermistor tolerance and any remaining ADC/circuit error,
-// so they only hold with the circuit constants above and the resistors fitted.
+// Thermistor constants. NOT YET CALIBRATED ON THE PCB.
+// R25/B below are the fits from the old board (2026-10-25 ice bath + boiling
+// water). Those fits also absorbed the old ESP8266 ADC's errors and its 320k
+// load model, so on the PCB they are only a starting point (expect a degree or
+// two of error). Recalibrate with an ice bath (0 °C) and boiling water
+// (~95.7 °C in Salt Lake City), logging with averaging on, then:
+//   python3 tools/calibrate_thermistors.py --average ice.csv --timeline   (find the flat part)
+//   python3 tools/calibrate_thermistors.py --average ice.csv --from S --to S
+//   (same for the boiling log), then fit both points:
+//   python3 tools/calibrate_thermistors.py --point 0:PID:AUX --point 95.7:PID:AUX
+// (the tool checks adc_fs in the log, so old 10-bit logs are not mixed in).
+// Measure R1 and R2 on the board with the sensors unplugged and the board
+// unpowered, and set SERIES_RESISTOR / AUX_SERIES_RESISTOR first: the fit
+// depends on them.
 
-// PID Temp Sensor (channel 1): 100k NTC, Beta 3950 (Ender 3 type)
-// Divider: VS -- SERIES_RESISTOR -- C1 -- NTC -- GND
-const float THERMISTOR_NOMINAL = 97886.0;    // R25, fitted (datasheet: 100000)
+// PID Temp Sensor (channel 1): 100k NTC, Beta 3950 (Ender 3 type), J4
+// Divider: +3V3 -- R1 (SERIES_RESISTOR) -- CH1 -- NTC -- GND
+const float THERMISTOR_NOMINAL = 97886.0;    // R25: old-board fit, recalibrate (datasheet: 100000)
 const float TEMPERATURE_NOMINAL = 25.0;      // 25°C
-const float B_COEFFICIENT = 3910.0;          // Beta, fitted (datasheet: 3950)
-const float SERIES_RESISTOR = 98000.0;       // Series resistor, measured on the board (100k part, reads 98k)
+const float B_COEFFICIENT = 3910.0;          // Beta: old-board fit, recalibrate (datasheet: 3950)
+const float SERIES_RESISTOR = 100000.0;      // R1, 100k nominal: replace with the measured value
 
-// AUX Temp Sensor (channel 2): MF55 ultra-thin 10k NTC, Beta 3950
-// Divider: VS -- AUX_SERIES_RESISTOR -- C2 -- NTC -- GND
-// AUX_SERIES_RESISTOR must match the resistor actually fitted. ~2 kOhm puts the
-// best resolution (~9 ADC counts/°C) around 60-70°C, where the NTC itself is
-// ~2.5k-1.8k. 2.0k-2.7k all give about the same resolution there; 2.7k heats
-// the NTC less (self-heating ~1.4-1.9°C in still air with 2.0k at 65°C).
-const float AUX_THERMISTOR_NOMINAL = 10631.0;  // R25, fitted (datasheet: 10000)
+// AUX Temp Sensor (channel 2): MF55 ultra-thin 10k NTC, Beta 3950, J5
+// Divider: +3V3 -- R2 (AUX_SERIES_RESISTOR) -- CH2 -- NTC -- GND
+// 2 kOhm puts the best resolution (~37 codes/°C on the MCP3208) around
+// 60-70 °C, where the NTC itself is ~2.5k-1.8k. Self-heating in still air is
+// ~1.4-1.9 °C at 65 °C with 2.0k (2.7k heats it less, at about the same resolution).
+const float AUX_THERMISTOR_NOMINAL = 10631.0;  // R25: old-board fit, recalibrate (datasheet: 10000)
 const float AUX_TEMPERATURE_NOMINAL = 25.0;    // 25°C
-const float AUX_B_COEFFICIENT = 4096.0;        // Beta, fitted (datasheet B25/50: 3950, MF55 103F3950)
-const float AUX_SERIES_RESISTOR = 2000.0;      // 2.0k series resistor (measured 2.00k on the board)
+const float AUX_B_COEFFICIENT = 4096.0;        // Beta: old-board fit, recalibrate (datasheet B25/50: 3950)
+const float AUX_SERIES_RESISTOR = 2000.0;      // R2, 2k nominal: replace with the measured value
 
 // ---------------------------------------------------------------------------
-// Hotplate correction (2026-10-28). After the Beta conversion above, each
+// Hotplate correction (2026-10-28, OLD BOARD). After the Beta conversion, each
 // sensor's reading is corrected by subtracting an error looked up from its
 // reading (linear interpolation between points; 0 outside 0-95.7 °C).
 // Measured with both sensors side by side on a hotplate surface (Kapton tape +
@@ -93,9 +91,15 @@ const float AUX_SERIES_RESISTOR = 2000.0;      // 2.0k series resistor (measured
 // multimeter check in water at 45 °C pointed ~2-4 °C higher than the hotplate
 // scale, so treat absolute temperatures as about +/-1.5 °C; the difference
 // between the two sensors is good to a few tenths of a degree.
-// Set APPLY_TEMPERATURE_CORRECTION to false to log the Beta-equation values only.
+// OFF ON THE PCB: these tables were measured with the old ESP8266 ADC, and part
+// of what they corrected was that ADC's non-linearity, which the MCP3208 does
+// not have. The rest was the fixture (sensor placement and contact), which is
+// still there. Re-measure on the PCB after the ice/boiling recalibration and
+// only turn this back on with new tables. Note: the PID-vs-AUX difference in
+// use (e.g. 67 vs 54.5 °C) is heat flow through the sapphire, not ADC error, so
+// it will not go away with the new ADC.
 // ---------------------------------------------------------------------------
-const bool APPLY_TEMPERATURE_CORRECTION = true;
+const bool APPLY_TEMPERATURE_CORRECTION = false;
 
 struct CorrectionPoint {
   float reading;     // Beta-equation reading (°C)
@@ -130,54 +134,63 @@ static float applyCorrection(float reading, const CorrectionPoint* table, int co
   return reading;
 }
 
-// Current sensor channel being read
-int currentSensorChannel = VOLTAGE_CHANNEL; // Start with voltage channel
+// Latest raw sample of each sensor (see sensor_manager.h)
+float livePidTemperature = NAN;
+float liveAuxTemperature = NAN;
+unsigned long liveSampleTime = 0;
 
-void setupMultiplexer() {
-  Serial.print("Setting up CD74HC4067 multiplexer... ");
-  pinMode(MUX_S0, OUTPUT);
-  pinMode(MUX_S1, OUTPUT);
-  pinMode(MUX_S2, OUTPUT);
-  pinMode(MUX_S3, OUTPUT);
-  selectMuxChannel(VOLTAGE_CHANNEL);
-  Serial.println("OK");
-  Serial.println("Multiplexer pins: S0=D1, S1=D2, S2=D3, S3=D4");
-  Serial.println("Channel 0: Voltage sensor");
-  Serial.println(F("Channel 1: PID Temp Sensor (100k NTC)"));
-  Serial.println(F("Channel 2: AUX Temp Sensor (MF55 10k NTC, selectable as the PID sensor)"));
+void setupAdc() {
+  Serial.print(F("Setting up MCP3208 ADC... "));
+  pinMode(ADC_CS_PIN, OUTPUT);
+  digitalWrite(ADC_CS_PIN, HIGH);   // Deselected before any SPI traffic
+  SPI.begin();                      // SD.begin() calls this again later; that is fine
+  Serial.println(F("OK"));
+  Serial.println(F("MCP3208 on SPI (D5 SCK, D6 MISO, D7 MOSI), CS = D1/GPIO5, 1 MHz"));
+  Serial.println(F("CH1: PID Temp Sensor (100k NTC, J4)"));
+  Serial.println(F("CH2: AUX Temp Sensor (MF55 10k NTC, J5, selectable as the PID sensor)"));
 }
 
-void selectMuxChannel(int channel) {
-  digitalWrite(MUX_S0, (channel & 0x01) ? HIGH : LOW);
-  digitalWrite(MUX_S1, (channel & 0x02) ? HIGH : LOW);
-  digitalWrite(MUX_S2, (channel & 0x04) ? HIGH : LOW);
-  digitalWrite(MUX_S3, (channel & 0x08) ? HIGH : LOW);
-  delayMicroseconds(10);
+// One single-ended conversion of CH0-CH7, returns 0-4095. About 30 us.
+// Command (MCP3208 datasheet, figure 6-1): start bit, SGL/DIFF = 1, D2 D1 D0.
+uint16_t readAdcChannel(uint8_t channel) {
+  channel &= 0x07;
+  SPI.beginTransaction(MCP3208_SPI);
+  digitalWrite(ADC_CS_PIN, LOW);
+  SPI.transfer(0x06 | (channel >> 2));               // 0 0 0 0 0 START SGL D2
+  uint8_t hi = SPI.transfer((channel & 0x03) << 6);  // D1 D0 x x x x x x -> ? ? ? 0 B11..B8
+  uint8_t lo = SPI.transfer(0x00);                   // B7..B0
+  digitalWrite(ADC_CS_PIN, HIGH);
+  SPI.endTransaction();
+  return ((uint16_t)(hi & 0x0F) << 8) | lo;
 }
 
-// Voltage at A0 / the selected divider node (0-3.2 V), with the calibration gain
-// applied. Used by both temperature conversions below and logged as
-// thermistor_v / aux_v, so each logged voltage is exactly the one its
-// temperature was calculated from.
+float readAdcChannelAveraged(uint8_t channel, int count) {
+  if (count < 1) count = 1;
+  uint32_t sum = 0;
+  for (int i = 0; i < count; i++) sum += readAdcChannel(channel);
+  return sum / (float)count;
+}
+
+void readTemperaturesNow(float& pidTemp, float& auxTemp, int count) {
+  pidTemp = convertThermistorToTemperature(readAdcChannelAveraged(THERMISTOR_CHANNEL, count));
+  auxTemp = convertAuxThermistorToTemperature(readAdcChannelAveraged(AUX_THERMISTOR_CHANNEL, count));
+}
+
+// Divider node voltage (0-3.3 V), logged as thermistor_v / aux_v for continuity
+// with the old logs. Not used by the temperature conversion (that is ratiometric).
 float thermistorAdcToVoltage(float adcValue) {
-  return (adcValue / 1024.0) * ADC_FULL_SCALE_VOLTAGE * ADC_CALIBRATION_GAIN;
+  return adcValue / ADC_COUNTS * THERMISTOR_SUPPLY_VOLTAGE;
 }
 
-// Beta-equation conversion for a divider VS -- seriesResistor -- node -- NTC -- GND,
-// with the board's ADC_INPUT_RESISTANCE in parallel with the NTC while sampling.
-// Returns -999 for an open, shorted or saturated sensor.
+// Beta-equation conversion for a divider +3V3 -- seriesResistor -- node -- NTC -- GND
+// read ratiometrically. Returns -999 for an open or shorted sensor.
 static float ntcAdcToCelsius(float adcValue, float seriesResistor, float nominalResistance,
                              float nominalTempC, float beta) {
-  if (adcValue <= 1) return -999;                  // Shorted NTC (or no reading)
-  if (adcValue >= ADC_SATURATED) return -999;      // At full scale: value unknown
-  float voltage = thermistorAdcToVoltage(adcValue);
-  if (voltage >= THERMISTOR_SUPPLY_VOLTAGE) return -999;
-  // Resistance below the node (NTC in parallel with the ADC input load)
-  float parallel = seriesResistor * voltage / (THERMISTOR_SUPPLY_VOLTAGE - voltage);
-  if (parallel >= ADC_INPUT_RESISTANCE) return -999;  // Only the ADC load is there: open NTC
-  // Remove the ADC load: 1/R = 1/parallel - 1/ADC_INPUT_RESISTANCE
-  float resistance = parallel * ADC_INPUT_RESISTANCE / (ADC_INPUT_RESISTANCE - parallel);
-  if (resistance <= 0) return -999;                    // Avoid log(0) or log(-)
+  if (adcValue <= ADC_SHORTED) return -999;        // Shorted NTC
+  if (adcValue >= ADC_SATURATED) return -999;      // Open NTC (pulled to +3V3)
+  float ratio = adcValue / ADC_COUNTS;             // = R / (Rs + R)
+  float resistance = seriesResistor * ratio / (1.0f - ratio);
+  if (resistance <= 0) return -999;                // Avoid log(0) or log(-)
   if (resistance > nominalResistance * NTC_OPEN_RATIO) return -999;  // Open NTC
   float steinhart;
   steinhart = resistance / nominalResistance;      // (R/Ro)
@@ -189,14 +202,14 @@ static float ntcAdcToCelsius(float adcValue, float seriesResistor, float nominal
   return steinhart;
 }
 
-// PID Temp Sensor (channel 1): Beta equation, then the hotplate correction
+// PID Temp Sensor (channel 1): Beta equation, then the hotplate correction (if on)
 float convertThermistorToTemperature(float adcValue) {
   float t = ntcAdcToCelsius(adcValue, SERIES_RESISTOR, THERMISTOR_NOMINAL,
                             TEMPERATURE_NOMINAL, B_COEFFICIENT);
   return applyCorrection(t, PID_CORRECTION, sizeof(PID_CORRECTION) / sizeof(PID_CORRECTION[0]));
 }
 
-// AUX Temp Sensor (channel 2): Beta equation, then the hotplate correction
+// AUX Temp Sensor (channel 2): Beta equation, then the hotplate correction (if on)
 float convertAuxThermistorToTemperature(float adcValue) {
   float t = ntcAdcToCelsius(adcValue, AUX_SERIES_RESISTOR, AUX_THERMISTOR_NOMINAL,
                             AUX_TEMPERATURE_NOMINAL, AUX_B_COEFFICIENT);
@@ -204,11 +217,9 @@ float convertAuxThermistorToTemperature(float adcValue) {
 }
 
 static void printTestTemperature(const char* label, int channel, float (*convert)(float)) {
-  selectMuxChannel(channel);
-  delay(10);
-  int reading = analogRead(A0);
+  uint16_t reading = readAdcChannel(channel);
   float temperature = convert(reading);
-  Serial.print("Channel ");
+  Serial.print(F("CH"));
   Serial.print(channel);
   Serial.print(" (");
   Serial.print(label);
@@ -218,22 +229,17 @@ static void printTestTemperature(const char* label, int channel, float (*convert
   if (temperature > -50 && temperature < 150) { // Reasonable range check
     Serial.print(temperature, 2);
     Serial.println("°C");
+  } else if (reading >= ADC_SATURATED) {
+    Serial.println(F("N/A (open: no thermistor connected)"));
+  } else if (reading <= ADC_SHORTED) {
+    Serial.println(F("N/A (shorted)"));
   } else {
-    Serial.println(F("N/A (no thermistor connected)"));
+    Serial.println(F("N/A (out of range)"));
   }
 }
 
 void testSensorChannels() {
-  Serial.println("Testing sensor channels:");
-  selectMuxChannel(VOLTAGE_CHANNEL);
-  delay(10);
-  int voltageReading = analogRead(A0);
-  Serial.print("Channel 0 (Voltage): ");
-  Serial.print(voltageReading);
-  Serial.print(" -> ");
-  Serial.print((voltageReading / 1024.0), 4);
-  Serial.println("V");
-
+  Serial.println(F("Testing sensor channels (MCP3208, 0-4095):"));
   printTestTemperature("PID Temp Sensor", THERMISTOR_CHANNEL, convertThermistorToTemperature);
   printTestTemperature("AUX Temp Sensor", AUX_THERMISTOR_CHANNEL, convertAuxThermistorToTemperature);
 }

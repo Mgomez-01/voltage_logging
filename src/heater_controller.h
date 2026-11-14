@@ -53,5 +53,8 @@ void setHeaterPower(float dutyCyclePercent);
 void checkHeaterSafety();
 void updatePIDController();
 void resetPIDState();      // Clear integral/derivative memory (on enable or gain change)
+// Called by readSensors() every sample cycle with the raw MCP3208 codes. The
+// PID's input is the mean of all cycles since its previous update.
+void addControlSample(uint16_t pidAdc, uint16_t auxAdc);
 
 #endif // HEATER_CONTROLLER_H

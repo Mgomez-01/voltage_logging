@@ -15,11 +15,7 @@
 #include "safety_system.h"
 #include "tuning.h"
 #include "program.h"
-
-// Fallback definition for A0 if not defined (for IDE/linter support)
-#ifndef A0
-#define A0 17  // ESP8266 ADC pin
-#endif
+#include "status_led.h"
 
 // Debug configuration for main.cpp only. Each .cpp file is compiled separately,
 // so these do not affect heater_controller.cpp or web_interface.cpp, which set
@@ -46,7 +42,14 @@ WebSocketsServer webSocket = WebSocketsServer(81);
 unsigned long lastSample = 0;
 unsigned long lastWebUpdate = 0;
 unsigned long lastDebugPrint = 0;
-const unsigned long SAMPLE_INTERVAL = 2; // One ADC read every 2 ms, cycling channels 0 -> 1 -> 2 (up to ~167 Hz per channel, ~167 CSV rows/s)
+// One sample cycle (PID + AUX Temp Sensor, one MCP3208 conversion each, ~60 us)
+// every 6 ms: up to ~167 cycles/s, the same row rate as the old board.
+// Cycles run all the time, logging or not. The PID uses the mean of every
+// cycle since its last update (~83 cycles per 500 ms update), so its input is
+// far quieter than any single row; logging faster would not help it. The rate
+// is set by the SD card instead: raw rows are ~110 bytes, so 167 rows/s is
+// ~66 MB/h (6 h: ~400 MB, in 50 MB files). Turn averaging on for long runs.
+const unsigned long SAMPLE_INTERVAL = 6;
 const unsigned long WEB_UPDATE_INTERVAL = 500; // Update web every 500ms (reduced from 100ms to save memory)
 const unsigned long DEBUG_INTERVAL = 1000; // Debug print every 1 second
 
@@ -64,25 +67,23 @@ void printDebugStats();
 void checkSafetyTimeout();
 
 void setup() {
-  Serial.begin(115200);
+  // TX only: RX (GPIO3) is the status LED's data line on the PCB. The firmware
+  // never reads from Serial, so only output is needed.
+  Serial.begin(115200, SERIAL_8N1, SERIAL_TX_ONLY);
+  // Heater off as early as possible (R3 also holds the gate low until here)
+  initializeHeaterPWM();
+  // Status LED after Serial.begin(): the LED driver takes over the RX pin
+  setupStatusLed();
   delay(1000); // Give serial time to initialize
 
   Serial.println();
   Serial.println("===============================================");
-  Serial.println(F("ESP8266 Voltage + Temperature Logger (PID + AUX Temp Sensors)"));
-  Serial.println("CD74HC4067 Multiplexer Version - **WATCHDOG FIX**");
+  Serial.println(F("ESP8266 Temperature Logger (PID + AUX Temp Sensors)"));
+  Serial.println(F("PCB version - MCP3208 12-bit ADC"));
   Serial.println("===============================================");
 
-  // ... (Rest of setup remains the same) ...
-    // Setup multiplexer control pins
-  setupMultiplexer();
-
-  // Setup heater PWM control
-  initializeHeaterPWM();
-
-  // Debug: Show what A0 maps to and test both channels
-  Serial.print("A0 pin number: ");
-  Serial.println(A0);
+  // MCP3208 ADC (shares SPI with the SD card, initialised later)
+  setupAdc();
 
   testSensorChannels();
 
@@ -130,7 +131,7 @@ void setup() {
   Serial.println("===============================================");
   Serial.println("DATA LOGGING IS PAUSED BY DEFAULT");
   Serial.println("   Click 'Start Logging' in web interface to begin");
-  Serial.println(F("   Voltage Channel 0, PID Temp Sensor Channel 1, AUX Temp Sensor Channel 2"));
+  Serial.println(F("   MCP3208 CH1: PID Temp Sensor, CH2: AUX Temp Sensor"));
   Serial.println("  PWM HEATER CONTROL READY");
   Serial.println("   PWM pin: GPIO16 (D0) - 32 Hz");
   Serial.println("   MOSFET: AOD4144 N-channel");
@@ -145,6 +146,7 @@ void setup() {
 
 void loop() {
   feedWatchdog(); // Feed at the start of every loop
+  statusLedLoop(); // Also runs during an emergency shutdown (flashing)
 
   if (emergencyShutdown) {
     stopTuning("emergency shutdown");  // No-op unless a tuning test is running
@@ -179,12 +181,13 @@ void loop() {
     lastPIDUpdate = millis();
   }
   
-  // Data logging and sensor reading
+  // Sensor sampling runs all the time: it feeds the PID and the safety checks,
+  // and the log when logging is on
+  if (millis() - lastSample >= SAMPLE_INTERVAL) {
+    lastSample = millis();
+    readSensors();
+  }
   if (dataLoggingEnabled) {
-    if (millis() - lastSample >= SAMPLE_INTERVAL) {
-      readSensors();
-      lastSample = millis();
-    }
     if (millis() - lastWebUpdate >= WEB_UPDATE_INTERVAL) {
       sendWebUpdate();
       lastWebUpdate = millis();
@@ -201,84 +204,60 @@ void loop() {
 
 
 void readSensors() {
-  // One ADC read per call, cycling channel 0 -> 1 -> 2. A sample cycle is
-  // completed after the AUX read, using the values from the two reads before
-  // it, and handed to addSampleCycle(): with averaging off it is logged as one
-  // row, with averaging on averageSamples cycles become one row.
-  static float lastVoltage = 0.0;
-  static int lastVoltageAdc = 0;
-  static float lastTemperature = 0.0;
-  static int lastThermistorAdc = 0;
-  static unsigned long lastThermistorTime = 0;
-  static bool lastHeaterState = false;
-  static bool lastPidEnabled = false;
-  static float lastDutyCycle = 0.0;
-  static float lastTargetTemp = 0.0;
-  if (currentSensorChannel == VOLTAGE_CHANNEL) {
-    selectMuxChannel(VOLTAGE_CHANNEL);
-    delayMicroseconds(50);
-    int adcValue = analogRead(ADC_PIN);
-    lastVoltageAdc = adcValue;
-    lastVoltage = (adcValue / 1024.0);
-    currentSensorChannel = THERMISTOR_CHANNEL;
-  } else if (currentSensorChannel == THERMISTOR_CHANNEL) {
-    // PID Temp Sensor. The row's timestamp and heater/PID state are taken
-    // here, at the sample the PID uses.
-    selectMuxChannel(THERMISTOR_CHANNEL);
-    delayMicroseconds(50);
-    int adcValue = analogRead(ADC_PIN);
-    lastThermistorAdc = adcValue;
-    lastTemperature = convertThermistorToTemperature(adcValue);
-    lastThermistorTime = millis();
-    lastHeaterState = (heaterDutyCycle > 0);
-    lastPidEnabled = pidEnabled;
-    lastDutyCycle = heaterDutyCycle;
-    lastTargetTemp = targetTemperature;
-    currentSensorChannel = AUX_THERMISTOR_CHANNEL;
-  } else {
-    // AUX Temp Sensor (the PID uses it only when it is the selected control
-    // sensor). Completes the sample cycle.
-    selectMuxChannel(AUX_THERMISTOR_CHANNEL);
-    delayMicroseconds(50);
-    int adcValue = analogRead(ADC_PIN);
-    SensorReading cycle;
-    cycle.timestamp = lastThermistorTime;
-    cycle.voltage = lastVoltage;
-    cycle.voltageAdc = lastVoltageAdc;
-    cycle.temperature = lastTemperature;
-    cycle.thermistorAdc = lastThermistorAdc;
-    cycle.auxThermistorAdc = adcValue;
-    cycle.heaterState = lastHeaterState;  // Is the heater active?
-    cycle.pidEnabled = lastPidEnabled;    // PID in control (vs manual/off)
-    cycle.pidValue = lastDutyCycle;       // Actual PWM duty cycle percentage
-    cycle.targetTemp = lastTargetTemp;
-    cycle.samples = 1;
-    cycle.control = controlSensor;        // Sensor the PID controls (0 = PID, 1 = AUX)
-    cycle.step = programStepNumber();     // Setpoint program step (0 = none)
-    #if DEBUG_ADC
-    static unsigned long cycleCount = 0;
-    if (++cycleCount % 500 == 0) {
-      Serial.print("Sample cycle #");
-      Serial.print(cycleCount);
-      Serial.print(": V=");
-      Serial.print(lastVoltage, 4);
-      Serial.print("V, T=");
-      Serial.print(lastTemperature, 2);
-      Serial.print("°C (Buffer: ");
-      Serial.print(bufferIndex);
-      Serial.println(")");
-    }
-    #endif
-    // Logged as a raw row, or added to the running average (data_manager.cpp)
-    addSampleCycle(cycle);
-    currentSensorChannel = VOLTAGE_CHANNEL;
+  // One sample cycle: one conversion of each sensor, back to back (~60 us).
+  // Updates the live readings (safety checks, status), adds the codes to the
+  // PID's average, and, when logging, hands the cycle to addSampleCycle():
+  // with averaging off it is logged as one row, with averaging on
+  // averageSamples cycles become one row.
+  uint16_t pidAdc = readAdcChannel(THERMISTOR_CHANNEL);
+  uint16_t auxAdc = readAdcChannel(AUX_THERMISTOR_CHANNEL);
+  unsigned long now = millis();
+  float pidTemp = convertThermistorToTemperature(pidAdc);
+  livePidTemperature = pidTemp;
+  liveAuxTemperature = convertAuxThermistorToTemperature(auxAdc);
+  liveSampleTime = now ? now : 1;   // 0 means "no sample yet"
+  addControlSample(pidAdc, auxAdc); // PID input: mean of the cycles since its last update
+
+  if (!dataLoggingEnabled) return;
+
+  SensorReading cycle;
+  cycle.timestamp = now;
+  cycle.voltage = 0;                    // No voltage input on the PCB (column kept for old scripts)
+  cycle.voltageAdc = 0;
+  cycle.temperature = pidTemp;
+  cycle.thermistorAdc = pidAdc;
+  cycle.auxThermistorAdc = auxAdc;
+  cycle.heaterState = (heaterDutyCycle > 0);  // Is the heater active?
+  cycle.pidEnabled = pidEnabled;        // PID in control (vs manual/off)
+  cycle.pidValue = heaterDutyCycle;     // Actual PWM duty cycle percentage
+  cycle.targetTemp = targetTemperature;
+  cycle.samples = 1;
+  cycle.control = controlSensor;        // Sensor the PID controls (0 = PID, 1 = AUX)
+  cycle.step = programStepNumber();     // Setpoint program step (0 = none)
+  #if DEBUG_ADC
+  static unsigned long cycleCount = 0;
+  if (++cycleCount % 500 == 0) {
+    Serial.print("Sample cycle #");
+    Serial.print(cycleCount);
+    Serial.print(": PID ");
+    Serial.print(pidAdc);
+    Serial.print(" -> ");
+    Serial.print(pidTemp, 2);
+    Serial.print("°C, AUX ");
+    Serial.print(auxAdc);
+    Serial.print(" (Buffer: ");
+    Serial.print(bufferIndex);
+    Serial.println(")");
   }
+  #endif
+  // Logged as a raw row, or added to the running average (data_manager.cpp)
+  addSampleCycle(cycle);
 }
 
 void checkSafetyTimeout() {
   if (millis() - lastSafetyCheck > SAFETY_CHECK_INTERVAL * 3 && !emergencyShutdown) {
     Serial.println("WARNING: Hardware safety system not responding!");
-    emergencyShutdown = true;
+    triggerEmergencyShutdown(SHUTDOWN_SAFETY_TIMER);
   }
   // Call heater controller's safety check function
   checkHeaterSafety();
@@ -289,7 +268,9 @@ void printDebugStats() {
     Serial.println("=== SENSOR DEBUG STATS ===");
     Serial.print("Uptime: "); Serial.print(millis() / 1000); Serial.println(" seconds");
     Serial.println("HARDWARE SAFETY SYSTEM:");
-    Serial.print("  Status: "); Serial.println(emergencyShutdown ? "*** EMERGENCY SHUTDOWN ACTIVE ***" : "Active and monitoring");
+    Serial.print("  Status: ");
+    if (emergencyShutdown) { Serial.print(F("*** EMERGENCY SHUTDOWN ACTIVE *** (")); Serial.print(shutdownReasonText()); Serial.println(")"); }
+    else Serial.println("Active and monitoring");
     Serial.print("  Last safety check: "); Serial.print((millis() - lastSafetyCheck) / 1000); Serial.println(" seconds ago");
     Serial.print("  Watchdog: "); Serial.println(systemAlive ? "Fed" : "STARVED");
     Serial.print("Data Logging: "); Serial.println(dataLoggingEnabled ? "ENABLED" : "PAUSED");
@@ -338,20 +319,18 @@ void printDebugStats() {
     if (pidEnabled) { Serial.print(" (Target: "); Serial.print(targetTemperature); Serial.print("°C, Output: "); Serial.print(pidOutput, 1); Serial.print("%, Error: "); Serial.print(pidError, 2); Serial.print("°C)"); } Serial.println();
     Serial.print("  PID Parameters: Kp="); Serial.print(pidKp); Serial.print(", Ki="); Serial.print(pidKi); Serial.print(", Kd="); Serial.println(pidKd);
     Serial.println("LIVE sensor readings:");
-    selectMuxChannel(VOLTAGE_CHANNEL); delay(5); int voltageADC = analogRead(A0); float currentVoltage = (voltageADC / 1024.0);
-    Serial.print("  Voltage (Ch0): "); Serial.print(voltageADC); Serial.print(" -> "); Serial.print(currentVoltage, 6); Serial.println("V");
-    selectMuxChannel(THERMISTOR_CHANNEL); delay(5); int tempADC = analogRead(A0); float currentTemperature = convertThermistorToTemperature(tempADC);
-    Serial.print(F("  PID Temp Sensor (Ch1): ")); Serial.print(tempADC); Serial.print(" -> ");
+    int tempADC = readAdcChannel(THERMISTOR_CHANNEL); float currentTemperature = convertThermistorToTemperature(tempADC);
+    Serial.print(F("  PID Temp Sensor (CH1): ")); Serial.print(tempADC); Serial.print(" -> ");
     if (currentTemperature > -50 && currentTemperature < 150) { Serial.print(currentTemperature, 3); Serial.println("°C"); } else { Serial.println("N/A (no thermistor or bad reading)"); }
-    selectMuxChannel(AUX_THERMISTOR_CHANNEL); delay(5); int auxADC = analogRead(A0); float currentAuxTemperature = convertAuxThermistorToTemperature(auxADC);
-    Serial.print(F("  AUX Temp Sensor (Ch2): ")); Serial.print(auxADC); Serial.print(" -> ");
+    int auxADC = readAdcChannel(AUX_THERMISTOR_CHANNEL); float currentAuxTemperature = convertAuxThermistorToTemperature(auxADC);
+    Serial.print(F("  AUX Temp Sensor (CH2): ")); Serial.print(auxADC); Serial.print(" -> ");
     if (currentAuxTemperature > -50 && currentAuxTemperature < 150) { Serial.print(currentAuxTemperature, 3); Serial.println("°C"); } else { Serial.println("N/A (no thermistor or bad reading)"); }
     if (dataLoggingEnabled && (bufferIndex > 0 || bufferFull)) {
         Serial.println("Last 3 BUFFERED sensor readings:");
         for (int i = 0; i < 3; i++) {
             int idx = (bufferIndex - 1 - i + BUFFER_SIZE) % BUFFER_SIZE;
             if (bufferFull || idx < bufferIndex) {
-                Serial.print("  [" + String(idx) + "] "); Serial.print(readings[idx].voltage, 4); Serial.print("V | PID "); Serial.print(readings[idx].temperature, 2); Serial.print("°C | AUX "); Serial.print(convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc), 2); Serial.print("°C @ "); Serial.print(readings[idx].timestamp); Serial.println("ms");
+                Serial.print("  [" + String(idx) + "] PID "); Serial.print(readings[idx].temperature, 2); Serial.print("°C | AUX "); Serial.print(convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc), 2); Serial.print("°C @ "); Serial.print(readings[idx].timestamp); Serial.println("ms");
             }
         }
     } else if (!dataLoggingEnabled) { Serial.println("No buffered readings (logging paused)"); }

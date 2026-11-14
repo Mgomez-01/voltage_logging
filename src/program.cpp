@@ -271,19 +271,14 @@ static const char* stateName() {
   }
 }
 
-// Latest readings of both sensors: the last logged row, or direct reads
+// Latest readings of both sensors: the live sample (taken every ~6 ms whether
+// or not logging is on), or a direct read before the first sample
 static void latestTemps(float& pidT, float& auxT) {
-  if (bufferIndex > 0 || bufferFull) {
-    int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
-    pidT = readings[idx].temperature;
-    auxT = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
+  if (liveSampleTime != 0) {
+    pidT = livePidTemperature;
+    auxT = liveAuxTemperature;
   } else {
-    selectMuxChannel(THERMISTOR_CHANNEL);
-    delayMicroseconds(100);
-    pidT = convertThermistorToTemperature(analogRead(ADC_PIN));
-    selectMuxChannel(AUX_THERMISTOR_CHANNEL);
-    delayMicroseconds(100);
-    auxT = convertAuxThermistorToTemperature(analogRead(ADC_PIN));
+    readTemperaturesNow(pidT, auxT, 4);
   }
 }
 

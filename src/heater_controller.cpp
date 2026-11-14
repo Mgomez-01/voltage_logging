@@ -126,31 +126,32 @@ void setHeaterPower(float dutyCyclePercent) {
 }
 
 void checkHeaterSafety() {
-  // This function needs access to the safety system variables and buffer
-  // The actual safety logic will be called from main loop
-  if (!emergencyShutdown && (bufferIndex > 0 || bufferFull)) {
-    int idx = bufferIndex == 0 ? BUFFER_SIZE - 1 : bufferIndex - 1;
-    float currentTemp = readings[idx].temperature;
+  // Uses the live PID Temp Sensor sample from readSensors(), which runs whether
+  // or not logging is on (on the old board these checks only ran while logging,
+  // because they read the log buffer).
+  if (!emergencyShutdown && liveSampleTime != 0) {
+    float currentTemp = livePidTemperature;
     
     // Check for over-temperature
     if (currentTemp > MAX_SAFE_TEMPERATURE) {
       Serial.print("SAFETY: Over-temperature shutdown! Temp=");
       Serial.print(currentTemp);
       Serial.println("°C");
-      emergencyShutdown = true;
+      triggerEmergencyShutdown(SHUTDOWN_OVER_TEMP);
     }
     
-    // Check for sensor failure (only if heater is active)
+    // Check for sensor failure (only if heater is active). -999 = open/short.
     if (heaterDutyCycle > 0 && (isnan(currentTemp) || currentTemp < -50 || currentTemp > 200)) {
       Serial.println("SAFETY: Temperature sensor failure - emergency shutdown");
-      emergencyShutdown = true;
+      triggerEmergencyShutdown(SHUTDOWN_SENSOR);
     }
-    
-    // Check for maximum runtime (MAX_HEATER_TIME = 6 h continuous heating)
-    if (heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
-      Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
-      emergencyShutdown = true;
-    }
+  }
+  
+  // Check for maximum runtime (MAX_HEATER_TIME = 6 h continuous heating). The
+  // safety timer (safety_system.cpp) checks this too.
+  if (!emergencyShutdown && heaterDutyCycle > 0 && (millis() - heaterStartTime) > MAX_HEATER_TIME) {
+    Serial.println("SAFETY: Maximum heater runtime exceeded - emergency shutdown");
+    triggerEmergencyShutdown(SHUTDOWN_TIMEOUT);
   }
   
   // Execute emergency shutdown if triggered
@@ -198,12 +199,55 @@ static void pidFault(const char* message) {
   Serial.println(pidFaultMessage);
 }
 
+static void resetControlAverage();
+
 void resetPIDState() {
+  resetControlAverage();   // First update after (re)enabling uses fresh samples only
   pidFaultMessage[0] = '\0';
   pidIntegral = 0;
   pidLastError = 0;
   pidLastInput = NAN;
   pidError = 0;
+}
+
+// PID input averaging. readSensors() adds every sample cycle (~every 6 ms);
+// updatePIDController() takes the mean every PID_INTERVAL (~83 cycles), which
+// cuts the noise ~9x compared with using one sample. If any cycle in the window
+// read an open/shorted sensor the window counts as a fault for that sensor (a
+// mean of good and bad codes would look like a plausible temperature).
+static uint32_t ctlPidSum = 0;
+static uint32_t ctlAuxSum = 0;
+static uint16_t ctlCount = 0;
+static bool ctlPidBad = false;
+static bool ctlAuxBad = false;
+static const uint16_t CTL_BAD_LOW = 1;      // Same limits as the conversion (sensor_manager.cpp)
+static const uint16_t CTL_BAD_HIGH = 4094;
+static const uint16_t CTL_MAX_CYCLES = 256; // ~1.5 s: older cycles are dropped (PID off, nobody takes them)
+
+static void resetControlAverage() {
+  ctlPidSum = ctlAuxSum = 0;
+  ctlCount = 0;
+  ctlPidBad = ctlAuxBad = false;
+}
+
+void addControlSample(uint16_t pidAdc, uint16_t auxAdc) {
+  if (ctlCount >= CTL_MAX_CYCLES) resetControlAverage();  // Start a fresh window
+  ctlPidSum += pidAdc;
+  ctlAuxSum += auxAdc;
+  ctlCount++;
+  if (pidAdc <= CTL_BAD_LOW || pidAdc >= CTL_BAD_HIGH) ctlPidBad = true;
+  if (auxAdc <= CTL_BAD_LOW || auxAdc >= CTL_BAD_HIGH) ctlAuxBad = true;
+}
+
+// Mean temperatures since the last call; false if no cycle came in (then read directly)
+static bool takeControlAverage(float& sheetTemp, float& auxTemp, uint16_t& cycles) {
+  cycles = ctlCount;
+  if (ctlCount == 0) return false;
+  float n = ctlCount;
+  sheetTemp = ctlPidBad ? -999 : convertThermistorToTemperature(ctlPidSum / n);
+  auxTemp = ctlAuxBad ? -999 : convertAuxThermistorToTemperature(ctlAuxSum / n);
+  resetControlAverage();
+  return true;
 }
 
 void updatePIDController() {
@@ -217,26 +261,13 @@ void updatePIDController() {
   }
   #endif
   
-  // Most recent readings of both sensors: the latest logged row, or direct
-  // reads when the buffer is empty (logging off, or just written to the card)
+  // Both sensors: the mean of the sample cycles since the last update, or a
+  // direct oversampled read if none came in (e.g. right after enabling)
   float sheetTemp = NAN;   // PID Temp Sensor (sheet)
   float auxTemp = NAN;     // AUX Temp Sensor (sample)
-  int idx = -1;
-  
-  if (bufferIndex > 0) {
-    idx = bufferIndex - 1;
-    sheetTemp = readings[idx].temperature;
-    auxTemp = convertAuxThermistorToTemperature(readings[idx].auxThermistorAdc);
-  } else {
-    selectMuxChannel(THERMISTOR_CHANNEL);
-    delayMicroseconds(100);  // Small delay for stability
-    sheetTemp = convertThermistorToTemperature(analogRead(ADC_PIN));
-    if (controlSensor == CONTROL_AUX_SENSOR) {
-      selectMuxChannel(AUX_THERMISTOR_CHANNEL);
-      delayMicroseconds(100);
-      auxTemp = convertAuxThermistorToTemperature(analogRead(ADC_PIN));
-    }
-    idx = -1;  // Indicate direct reading
+  uint16_t cycles = 0;
+  if (!takeControlAverage(sheetTemp, auxTemp, cycles)) {
+    readTemperaturesNow(sheetTemp, auxTemp, 16);
   }
   bool sheetValid = !(isnan(sheetTemp) || sheetTemp < -50 || sheetTemp > 200);
   bool auxValid = !(isnan(auxTemp) || auxTemp < -50 || auxTemp > 200);
@@ -265,18 +296,9 @@ void updatePIDController() {
   #if DEBUG_PID
   Serial.print("PID DEBUG: enabled=");
   Serial.print(pidEnabled);
-  Serial.print(", bufferIndex=");
-  Serial.print(bufferIndex);
-  Serial.print(", totalReadings=");
-  Serial.print(totalReadings);
-  Serial.print(", bufferFull=");
-  Serial.print(bufferFull);
-  if (idx >= 0) {
-    Serial.print(", idx=");
-    Serial.print(idx);
-  } else {
-    Serial.print(", direct_sensor");
-  }
+  Serial.print(", cycles averaged=");
+  Serial.print(cycles);
+  if (cycles == 0) Serial.print(" (direct read)");
   Serial.print(", temp=");
   Serial.println(currentTemp);
   #endif
@@ -373,10 +395,8 @@ void updatePIDController() {
   Serial.print(pidOutput, 1);
   Serial.print("%, PWM=");
   Serial.print(heaterDutyCycle, 1);
-  Serial.print("%, BufIdx=");
-  Serial.print(bufferIndex);
-  Serial.print(", ReadIdx=");
-  Serial.print(idx);
+  Serial.print("%, Cycles=");
+  Serial.print(cycles);
   Serial.print(", Logging=");
   Serial.println(dataLoggingEnabled ? "ON" : "OFF");
   #endif

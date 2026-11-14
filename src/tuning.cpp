@@ -20,7 +20,7 @@ static const unsigned long MIN_PHASE_MS = 120000; // Hold each step test phase a
 static const unsigned long SETTLE_WINDOW_DS = 600;  // Settling judged over the last 60 s (0.1 s units)
 static const float SETTLE_SLOPE_C_PER_MIN = 0.15; // Settled when the trend is flatter than this
 static const uint16_t BASE_INTERVAL_DS = 10;      // Record every 1.0 s (doubles if the buffer fills)
-static const int ADC_AVERAGE = 8;                 // ADC reads averaged per sensor per sample
+static const int ADC_AVERAGE = 32;                // MCP3208 conversions averaged per sensor per sample (~2 ms)
 static const char* PID_GAINS_FILE = "/pid.json";
 
 // ---------------------------------------------------------------------------
@@ -83,11 +83,7 @@ void stopTuning(const char* reason) {
 }
 
 static float readAveragedAdc(int channel) {
-  selectMuxChannel(channel);
-  delayMicroseconds(60);
-  uint32_t sum = 0;
-  for (int i = 0; i < ADC_AVERAGE; i++) sum += analogRead(ADC_PIN);
-  return sum / (float)ADC_AVERAGE;
+  return readAdcChannelAveraged(channel, ADC_AVERAGE);   // MCP3208, ~30 us per conversion
 }
 
 static int16_t toCentiC(float t) {
@@ -157,8 +153,7 @@ void tuningLoop() {
   if (lastSampleMs != 0 && now - lastSampleMs < (unsigned long)sampleIntervalDs * 100UL) return;
   lastSampleMs = now;
 
-  // Read both sensors (averaged). This switches the mux, which the logging
-  // state machine re-selects on its next read anyway.
+  // Read both sensors (ADC_AVERAGE conversions each, ~0.5 ms in total)
   float pidT = convertThermistorToTemperature(readAveragedAdc(THERMISTOR_CHANNEL));
   float auxT = convertAuxThermistorToTemperature(readAveragedAdc(AUX_THERMISTOR_CHANNEL));
 

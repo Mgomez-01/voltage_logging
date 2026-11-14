@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ESP8266 Voltage + Temperature Logger with Heater Control</title>
+    <title>ESP8266 Temperature Logger with Heater Control</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" charset="UTF-8">
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
@@ -52,15 +52,15 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>ESP8266 Voltage + Temperature Logger with Heater Control</h1>
-            <p>Real-time voltage and temperature monitoring with PID heater control</p>
+            <h1>ESP8266 Temperature Logger with Heater Control</h1>
+            <p>Real-time temperature monitoring with PID heater control</p>
             <p><a href="/program" style="color:inherit;font-weight:bold;">Setpoint program (experiments) &rarr;</a> &nbsp;|&nbsp; <a href="/tune" style="color:inherit;font-weight:bold;">PID tuning page &rarr;</a> (close this page while tuning)</p>
         </div>
 
         <div class="debug">
             <strong>Basic Info:</strong><br>
-            ESP8266 IP: {{WIFI_IP}} | WebSocket Port: 81 | ADC Pin: A0 (pin {{ADC_PIN_NUM}})<br>
-            Channel 0: Voltage Sensor | Channel 1: PID Temp Sensor (100k NTC) | Channel 2: AUX Temp Sensor (10k NTC, selectable as the PID sensor) | Heater PWM: GPIO16 (D0) via AOD4144 MOSFET | Logs: SD card<br>
+            ESP8266 IP: {{WIFI_IP}} | WebSocket Port: 81 | ADC: {{ADC_PIN_NUM}} (12-bit, SPI)<br>
+            CH1: PID Temp Sensor (100k NTC, J4) | CH2: AUX Temp Sensor (10k NTC, J5, selectable as the PID sensor) | Heater PWM: GPIO16 (D0) via AOD4144 MOSFET | Logs: SD card<br>
             Uptime: <span id="uptime">0</span>s | Chart: <span id="chartStatus">Checking...</span> | Logging: <span id="loggingStatus">{{LOGGING_STATUS_TEXT_INITIAL}}</span>
         </div>
 
@@ -167,10 +167,6 @@ function resetSystem() {
 
         <div class="current-readings">
             <div class="reading">
-                <div class="reading-value" id="currentVoltage">--</div>
-                <div class="reading-label">Voltage (V)</div>
-            </div>
-            <div class="reading">
                 <div class="reading-value" id="currentTemperature">--</div>
                 <div class="reading-label">PID Temp Sensor (°C)</div>
             </div>
@@ -181,9 +177,6 @@ function resetSystem() {
         </div>
 
         <div class="stats">
-            <div class="stat"><div class="stat-value" id="minVoltage">--</div><div class="stat-label">Min Voltage (V)</div></div>
-            <div class="stat"><div class="stat-value" id="maxVoltage">--</div><div class="stat-label">Max Voltage (V)</div></div>
-            <div class="stat"><div class="stat-value" id="avgVoltage">--</div><div class="stat-label">Avg Voltage (V)</div></div>
             <div class="stat"><div class="stat-value" id="minTemperature">--</div><div class="stat-label">Min PID Temp (°C)</div></div>
             <div class="stat"><div class="stat-value" id="maxTemperature">--</div><div class="stat-label">Max PID Temp (°C)</div></div>
             <div class="stat"><div class="stat-value" id="avgTemperature">--</div><div class="stat-label">Avg PID Temp (°C)</div></div>
@@ -231,7 +224,6 @@ function resetSystem() {
                 <label>Right axis
                     <select id="plotRight" onchange="redrawPlot()">
                         <option value="duty" selected>Heater power (%)</option>
-                        <option value="volt">Voltage, channel 0 (V)</option>
                         <option value="none">None</option>
                     </select>
                 </label>
@@ -253,7 +245,7 @@ function resetSystem() {
 
     <script>
         let ws, startTime = Date.now();
-        // Live plot data: { t: device time (s), pid, aux, target, duty, volt, pidOn }
+        // Live plot data: { t: device time (s), pid, aux, target, duty, pidOn }
         let plotData = [];
         const PLOT_MAX_POINTS = 8000;
         let plotRedrawPending = false;
@@ -261,7 +253,7 @@ function resetSystem() {
         // It now *only* controls if we *show* logs/chart updates, not *backend* logging.
         let displayLoggingEnabled = true;
         let connectionAttempts = 0, lastMessageTime = 0, maxRetries = 3;
-        let voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+        let sampleCount = 0;   // Readings received by this page
         let tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };     // PID Temp Sensor
         let auxTempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };  // AUX Temp Sensor
         let heaterState = {{JS_HEATER_STATE_INITIAL}}; // Boolean
@@ -295,7 +287,7 @@ function resetSystem() {
             redrawPlot();
         }
 
-        function addPlotPoint(timestamp, voltage, temperature, auxTemperature, data) {
+        function addPlotPoint(timestamp, temperature, auxTemperature, data) {
             const t = timestamp / 1000;
             // A smaller device time means the board rebooted: start over
             if (plotData.length && t < plotData[plotData.length - 1].t - 1) plotData = [];
@@ -309,8 +301,7 @@ function resetSystem() {
                 aux: auxTemperature,
                 target: data && data.targetTemp !== undefined ? data.targetTemp : null,
                 pidOn: data ? !!data.pidEnabled : false,
-                duty: duty,
-                volt: voltage
+                duty: duty
             });
             if (plotData.length > PLOT_MAX_POINTS) plotData.splice(0, plotData.length - PLOT_MAX_POINTS);
             if (!plotRedrawPending) {
@@ -364,7 +355,6 @@ function resetSystem() {
             // Right axis range
             let rMax = 1, rUnit = '';
             if (right === 'duty') { rMax = Math.max(10, Math.ceil(Math.max(...pts.map(p => p.duty || 0)) / 10) * 10); rUnit = '%'; }
-            if (right === 'volt') { rMax = Math.max(0.05, niceStep(Math.max(...pts.map(p => p.volt || 0)) * 1.2)); rUnit = 'V'; }
 
             const X = t => L + pw * (t - (tEnd - span)) / span;
             const Y = v => T + ph * (1 - (v - lo) / (hi - lo));
@@ -405,15 +395,14 @@ function resetSystem() {
                 g.stroke(); g.setLineDash([]); g.lineWidth = 1;
             };
             if (right === 'duty') line('duty', YR, '#2471a3', [3, 3]);
-            if (right === 'volt') line('volt', YR, '#2471a3', [3, 3]);
             if (showTarget) line('target', Y, '#1e8449', [6, 4], p => p.pidOn);
             if (showAux) line('aux', Y, '#e67e22');
             if (showPid) line('pid', Y, '#c0392b');
         }
 
         function downloadPlotCsv() {
-            const rows = ['device_time_s,pid_temp_c,aux_temp_c,setpoint_c,pid_enabled,heater_power_pct,voltage_v'];
-            plotData.forEach(p => rows.push([p.t.toFixed(3), p.pid ?? '', p.aux ?? '', p.target ?? '', p.pidOn ? 1 : 0, p.duty ?? '', p.volt ?? ''].join(',')));
+            const rows = ['device_time_s,pid_temp_c,aux_temp_c,setpoint_c,pid_enabled,heater_power_pct'];
+            plotData.forEach(p => rows.push([p.t.toFixed(3), p.pid ?? '', p.aux ?? '', p.target ?? '', p.pidOn ? 1 : 0, p.duty ?? ''].join(',')));
             const a = document.createElement('a');
             a.href = URL.createObjectURL(new Blob([rows.join('\n') + '\n'], { type: 'text/csv' }));
             a.download = 'live_plot.csv';
@@ -494,7 +483,7 @@ function resetSystem() {
                         }
                         // **FIX:** Only add if server is logging
                         if (serverLoggingState && data.type === 'reading') {
-                           addSensorReading(data.timestamp, data.voltage, data.temperature, data);
+                           addSensorReading(data.timestamp, data.temperature, data);
                         }
                     } catch(e) { logDebug('Error parsing message: ' + e.message); }
                 };
@@ -527,13 +516,13 @@ function resetSystem() {
                         return response.json();
                     })
                     .then(function(data) {
-                        logDebug('Polling success: V=' + data.voltage + ' V, PID T=' + data.temperature + ' °C, AUX T=' + data.auxTemperature + ' °C');
+                        logDebug('Polling success: PID T=' + data.temperature + ' °C, AUX T=' + data.auxTemperature + ' °C');
                         // **FIX:** Update serverLoggingState based on polling
                         serverLoggingState = data.loggingEnabled;
                         updateLoggingStatusUI();
                         // **FIX:** Only add if server is logging
-                        if (serverLoggingState && data.voltage !== undefined && data.temperature !== undefined) {
-                            addSensorReading(data.timestamp, data.voltage, data.temperature, data);
+                        if (serverLoggingState && data.temperature !== undefined) {
+                            addSensorReading(data.timestamp, data.temperature, data);
                         }
                         document.getElementById('status').textContent = 'HTTP Polling Active (receiving data)';
                         document.getElementById('status').className = 'status connected';
@@ -555,7 +544,7 @@ function resetSystem() {
                 })
                 .then(data => {
                     logDebug('/status test successful: ' + JSON.stringify(data));
-                    alert('ESP8266 connection OK!\nVoltage: ' + data.voltage + 'V\nPID Temp Sensor: ' + data.temperature + '°C\nAUX Temp Sensor: ' + data.auxTemperature + '°C');
+                    alert('ESP8266 connection OK!\nPID Temp Sensor: ' + data.temperature + '°C\nAUX Temp Sensor: ' + data.auxTemperature + '°C');
                 })
                 .catch(error => {
                     logDebug('/status test failed: ' + error.message);
@@ -566,9 +555,8 @@ function resetSystem() {
         // AUX Temp Sensor value from a WebSocket/status message; null if missing or invalid (-999)
         function validTemp(t) { return (typeof t === 'number' && t > -50 && t < 150) ? t : null; }
 
-        function addSensorReading(timestamp, voltage, temperature, data) {
+        function addSensorReading(timestamp, temperature, data) {
             const auxTemperature = data ? validTemp(data.auxTemperature) : null;
-            document.getElementById('currentVoltage').textContent = voltage.toFixed(4);
             document.getElementById('currentTemperature').textContent = temperature.toFixed(2);
             // The Temperature Control readout shows the sensor the PID controls
             const ctl = data && data.ctl !== undefined ? (data.ctl === 1 ? 'aux' : 'pid')
@@ -583,10 +571,7 @@ function resetSystem() {
                 updateHeaterStatus(data.heaterState, data.targetTemp, data.pidEnabled, data.pidOutput);
             }
 
-            voltageStats.min = Math.min(voltageStats.min, voltage);
-            voltageStats.max = Math.max(voltageStats.max, voltage);
-            voltageStats.sum += voltage;
-            voltageStats.count++;
+            sampleCount++;
 
             if (temperature > -50 && temperature < 150) {
                 tempStats.min = Math.min(tempStats.min, temperature);
@@ -601,10 +586,7 @@ function resetSystem() {
                 auxTempStats.count++;
             }
 
-            document.getElementById('minVoltage').textContent = voltageStats.min.toFixed(4);
-            document.getElementById('maxVoltage').textContent = voltageStats.max.toFixed(4);
-            document.getElementById('avgVoltage').textContent = (voltageStats.sum / voltageStats.count).toFixed(4);
-            document.getElementById('sampleCount').textContent = voltageStats.count;
+            document.getElementById('sampleCount').textContent = sampleCount;
 
             if (tempStats.count > 0) {
                 document.getElementById('minTemperature').textContent = tempStats.min.toFixed(2);
@@ -623,11 +605,11 @@ function resetSystem() {
                 ['minAuxTemperature', 'maxAuxTemperature', 'avgAuxTemperature'].forEach(id => document.getElementById(id).textContent = 'N/A');
             }
 
-            addPlotPoint(timestamp, voltage, temperature, auxTemperature, data);
+            addPlotPoint(timestamp, temperature, auxTemperature, data);
 
             const logContainer = document.getElementById('logContainer');
             const logEntry = document.createElement('div');
-            let logText = new Date(timestamp).toLocaleTimeString() + ' - ' + voltage.toFixed(4) + 'V | PID ' + temperature.toFixed(2) + '°C | AUX ' + (auxTemperature !== null ? auxTemperature.toFixed(2) + '°C' : 'N/A');
+            let logText = new Date(timestamp).toLocaleTimeString() + ' - PID ' + temperature.toFixed(2) + '°C | AUX ' + (auxTemperature !== null ? auxTemperature.toFixed(2) + '°C' : 'N/A');
             if (data && data.heaterState !== undefined) {
                 logText += ' | Heater: ' + (data.heaterState ? 'ON' : 'OFF');
                 if (data.pidEnabled) logText += ' | PID: ' + data.pidOutput.toFixed(1) + '%';
@@ -643,13 +625,12 @@ function resetSystem() {
                 fetch('/clear').then(function() {
                     plotData = [];
                     redrawPlot();
-                    voltageStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
+                    sampleCount = 0;
                     tempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
                     auxTempStats = { min: Infinity, max: -Infinity, sum: 0, count: 0 };
-                    ['minVoltage', 'maxVoltage', 'avgVoltage', 'minTemperature', 'maxTemperature', 'avgTemperature',
+                    ['minTemperature', 'maxTemperature', 'avgTemperature',
                      'minAuxTemperature', 'maxAuxTemperature', 'avgAuxTemperature'].forEach(id => document.getElementById(id).textContent = '--');
                     document.getElementById('sampleCount').textContent = '0';
-                    document.getElementById('currentVoltage').textContent = '--';
                     document.getElementById('currentTemperature').textContent = '--';
                     document.getElementById('currentAuxTemperature').textContent = '--';
                     document.getElementById('logContainer').innerHTML = '<div>Data cleared. New sensor readings will appear here...</div>';
@@ -965,7 +946,7 @@ function resetSystem() {
                 })
                 .then(data => {
                     updateDetailedDebug('Basic connectivity OK! ESP8266 responding.');
-                    updateDetailedDebug('Initial readings: V=' + data.voltage + ' V, T=' + data.temperature + ' °C');
+                    updateDetailedDebug('Initial readings: PID T=' + data.temperature + ' °C, AUX T=' + data.auxTemperature + ' °C');
                     serverLoggingState = data.loggingEnabled; // Set initial state
                     updateLoggingStatusUI(); // Update UI based on initial state
                     if (data.averagingEnabled !== undefined) {

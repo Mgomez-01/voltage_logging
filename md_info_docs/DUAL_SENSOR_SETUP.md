@@ -1,5 +1,7 @@
 # Sensor Setup (CD74HC4067 Multiplexer)
 
+> **Old board.** This describes the breadboard build with the CD74HC4067 mux into A0 (the `main` branch). The PCB on this branch reads the thermistors with an MCP3208 12-bit ADC and has no voltage input: see README.md ("Hardware", "How the temperatures are calculated") and WIRING_GUIDE.md.
+
 The ESP8266 has a single analog input (A0). A CD74HC4067 16-channel multiplexer puts the voltage sensor and both thermistors on that one pin, and the firmware switches between them.
 
 (This file kept its original name from when there were two channels. There are now three.)

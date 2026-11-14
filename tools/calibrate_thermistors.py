@@ -2,14 +2,20 @@
 """
 Thermistor calibration for the PID Temp Sensor (C1) and AUX Temp Sensor (C2).
 
-Give it the raw ADC counts each sensor read at one or more known temperatures
-(ice bath, boiling water, ...). It converts the counts to NTC resistance with
+PCB version (pcb_update branch): MCP3208 12-bit ADC, codes 0-4095, read
+ratiometrically (the NTC dividers and the ADC reference share +3V3).
+
+Give it the raw ADC codes each sensor read at one or more known temperatures
+(ice bath, boiling water, ...). It converts the codes to NTC resistance with
 the same circuit model as the firmware, fits each thermistor's Beta-equation
 constants (R25 and B), and prints the values to put in src/sensor_manager.cpp.
 
-The circuit constants (rail voltage, series resistors, A0 load, full scale,
-calibration gain) are read from src/sensor_manager.cpp, so the script always
-matches the firmware.
+The series resistors are read from src/sensor_manager.cpp, so the script always
+matches the firmware. Measure R1/R2 on the board and set them there first.
+
+Logs from the old board (ESP8266 A0 through the CD74HC4067 mux, 0-1023, no
+adc_fs column) need the old circuit model: calibrate those with the copy of
+this script on the main branch. --average says which kind a log is.
 
 The firmware also applies a hotplate correction table after the Beta
 equation (PID_CORRECTION / AUX_CORRECTION in src/sensor_manager.cpp). This
@@ -20,14 +26,14 @@ false) after a refit.
 
 Usage
 -----
-  # Average the raw counts in a log file (or a pasted serial capture):
+  # Average the raw codes in a log file (or a pasted serial capture):
   python3 tools/calibrate_thermistors.py --average data_4.log
   # Only use the settled part of a test (find it with --timeline first):
   python3 tools/calibrate_thermistors.py --average data_4.log --timeline
   python3 tools/calibrate_thermistors.py --average data_4.log --from 120 --to 300
 
   # Fit from known points: TEMP_C:PID_ADC:AUX_ADC (use '-' to skip a sensor)
-  python3 tools/calibrate_thermistors.py --point 0:658.2:1001.5 --point 95.7:77.7:293.1
+  python3 tools/calibrate_thermistors.py --point 0:3132.4:3887.9 --point 95.7:301.2:1132.0
 
 With 1 point:   fits B only (R25 stays at the datasheet value). Rough.
 With 2 points:  fits R25 and B exactly.             (ice + boiling recommended)
@@ -48,10 +54,11 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SENSOR_CPP = os.path.join(REPO, "src", "sensor_manager.cpp")
 
 CONSTANTS = [
-    "THERMISTOR_SUPPLY_VOLTAGE", "ADC_FULL_SCALE_VOLTAGE", "ADC_INPUT_RESISTANCE",
-    "ADC_CALIBRATION_GAIN", "THERMISTOR_NOMINAL", "B_COEFFICIENT", "SERIES_RESISTOR",
+    "ADC_COUNTS", "THERMISTOR_NOMINAL", "B_COEFFICIENT", "SERIES_RESISTOR",
     "AUX_THERMISTOR_NOMINAL", "AUX_B_COEFFICIENT", "AUX_SERIES_RESISTOR",
 ]
+ADC_SHORTED = 1       # Same limits as the firmware (sensor_manager.cpp)
+ADC_SATURATED = 4094
 
 
 def read_firmware_constants(path):
@@ -66,15 +73,12 @@ def read_firmware_constants(path):
 
 
 def adc_to_resistance(adc, series_r, c):
-    """Same math as ntcAdcToCelsius() in the firmware, up to the NTC resistance."""
-    vs, rl = c["THERMISTOR_SUPPLY_VOLTAGE"], c["ADC_INPUT_RESISTANCE"]
-    if adc <= 1 or adc >= 1023:
-        raise ValueError(f"ADC {adc} is shorted/saturated; can't use it")
-    v = adc / 1024.0 * c["ADC_FULL_SCALE_VOLTAGE"] * c["ADC_CALIBRATION_GAIN"]
-    parallel = series_r * v / (vs - v)
-    if parallel >= rl:
-        raise ValueError(f"ADC {adc} means an open sensor")
-    return parallel * rl / (rl - parallel)
+    """Same math as ntcAdcToCelsius() in the firmware, up to the NTC resistance:
+    code / 4096 = R / (Rs + R)."""
+    if adc <= ADC_SHORTED or adc >= ADC_SATURATED:
+        raise ValueError(f"ADC {adc} is shorted/open; can't use it")
+    ratio = adc / c["ADC_COUNTS"]
+    return series_r * ratio / (1.0 - ratio)
 
 
 def beta_temp_c(r, r25, b):
@@ -101,7 +105,7 @@ def fit(points, r25_nominal):
 
 
 def average_log(path, t_from=None, t_to=None, timeline=False):
-    """Average thermistor_adc / aux_adc from a CSV log, or the 'PID Temp Sensor (Ch1): N'
+    """Average thermistor_adc / aux_adc from a CSV log, or the 'PID Temp Sensor (CH1): N'
     lines of a serial capture. t_from/t_to (seconds since boot) limit a CSV log to the
     settled part of a test; timeline prints 10 s averages to find it. Averaged rows
     (samples > 1) hold mean counts and are weighted by their sample count."""
@@ -109,10 +113,13 @@ def average_log(path, t_from=None, t_to=None, timeline=False):
     pid_w, aux_w = [], []
     bins = {}
     header = None
+    full_scales = set()     # adc_fs per CSV header seen (1024 = old board, no column)
+    old_serial = False
     for line in open(path, errors="replace"):
         line = line.strip()
         if line.startswith("timestamp,"):
             header = line.split(",")
+            full_scales.add(4096 if "adc_fs" in header else 1024)
             continue
         if header and line and line[0].isdigit():
             cols = line.split(",")
@@ -125,18 +132,32 @@ def average_log(path, t_from=None, t_to=None, timeline=False):
                     bins.setdefault(int(ts // 10), []).append((float(row["thermistor_adc"]), float(row["aux_adc"])))
                 if (t_from is not None and ts < t_from) or (t_to is not None and ts > t_to):
                     continue
+                if "adc_fs" in row and row["adc_fs"] not in ("", "4096"):
+                    full_scales.add(int(float(row["adc_fs"])))
                 w = int(row.get("samples", "1") or 1)
                 if "thermistor_adc" in row:
                     pid.append(float(row["thermistor_adc"])); pid_w.append(w)
                 if "aux_adc" in row:
                     aux.append(float(row["aux_adc"])); aux_w.append(w)
             continue
-        m = re.search(r"PID Temp Sensor \(Ch1\): (\d+)", line)
+        # Serial capture. The PCB firmware prints "(CH1)" / "CH1 (PID Temp Sensor)";
+        # the old board printed "(Ch1)" with 0-1023 counts.
+        if re.search(r"Temp Sensor \(Ch[12]\): \d", line):
+            old_serial = True
+        m = (re.search(r"PID Temp Sensor \((?:CH|Ch)1\): (\d+)", line) or
+             re.search(r"CH1 \(PID Temp Sensor\): (\d+)", line))
         if m:
             pid.append(int(m.group(1))); pid_w.append(1)
-        m = re.search(r"AUX Temp Sensor \(Ch2\): (\d+)", line)
+        m = (re.search(r"AUX Temp Sensor \((?:CH|Ch)2\): (\d+)", line) or
+             re.search(r"CH2 \(AUX Temp Sensor\): (\d+)", line))
         if m:
             aux.append(int(m.group(1))); aux_w.append(1)
+    if 1024 in full_scales or old_serial:
+        print("WARNING: this log is from the OLD board (ESP8266 A0, 0-1023 counts, no adc_fs column).")
+        print("         Its counts do not fit the PCB's MCP3208 model. Calibrate it with")
+        print("         tools/calibrate_thermistors.py on the main branch instead.\n")
+    elif full_scales:
+        print(f"Log ADC full scale: {', '.join(str(f) for f in sorted(full_scales))} (MCP3208)")
     if timeline and bins:
         print("10 s averages (pick a flat stretch, then rerun with --from/--to):")
         print(f"  {'seconds':>11} {'rows':>5} {'PID mean':>9} {'min-max':>9} {'AUX mean':>9} {'min-max':>9}")
@@ -171,7 +192,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--point", action="append", default=[],
                     help="TEMP_C:PID_ADC:AUX_ADC (use '-' to skip a sensor). Repeat for more points.")
-    ap.add_argument("--average", metavar="FILE", help="Average the raw counts in a log file or serial capture")
+    ap.add_argument("--average", metavar="FILE", help="Average the raw codes in a log file or serial capture")
     ap.add_argument("--timeline", action="store_true",
                     help="With --average on a CSV log: print 10 s averages to find the settled stretch")
     ap.add_argument("--from", dest="t_from", type=float, metavar="S",
@@ -199,9 +220,15 @@ def main():
         return
 
     c = read_firmware_constants(args.firmware)
-    print(f"Circuit (from {os.path.relpath(args.firmware, REPO)}): VS={c['THERMISTOR_SUPPLY_VOLTAGE']} V, "
-          f"full scale={c['ADC_FULL_SCALE_VOLTAGE']} V, A0 load={c['ADC_INPUT_RESISTANCE']:.0f} ohm, "
-          f"gain={c['ADC_CALIBRATION_GAIN']}")
+    print(f"Circuit (from {os.path.relpath(args.firmware, REPO)}): MCP3208, ratiometric, "
+          f"full scale {c['ADC_COUNTS']:.0f} codes, R1={c['SERIES_RESISTOR']:.0f} ohm, "
+          f"R2={c['AUX_SERIES_RESISTOR']:.0f} ohm")
+    for t, *v in [(p.split(":")[0], *p.split(":")[1:]) for p in args.point]:
+        for a in v:
+            if a != "-" and float(a) < 1024 and float(t) < 50:
+                print(f"NOTE: --point {t}:{':'.join(v)} looks like old 10-bit A0 counts (an ice-bath "
+                      "reading on the PCB is ~3100 PID / ~3900 AUX). Check it came from a PCB log.")
+                break
 
     sensors = {
         "PID": dict(idx=1, rs=c["SERIES_RESISTOR"], r25=c["THERMISTOR_NOMINAL"], b=c["B_COEFFICIENT"],

@@ -6,6 +6,7 @@ Ticker watchdogTimer;         // Hardware watchdog timer
 volatile bool systemAlive = true;     // Watchdog heartbeat flag
 volatile unsigned long lastSafetyCheck = 0;  // Last safety check timestamp
 volatile bool emergencyShutdown = false;     // Emergency shutdown flag
+volatile uint8_t shutdownReason = SHUTDOWN_NONE;
 const unsigned long SAFETY_CHECK_INTERVAL = 500;  // Safety check every 500ms
 const unsigned long WATCHDOG_TIMEOUT = 10000;     // 10 second watchdog timeout
 
@@ -16,6 +17,7 @@ void IRAM_ATTR hardwareSafetyCheck() {
     heaterDutyCycle = 0.0;
     heaterEnabled = false;
     pidEnabled = false;
+    if (!emergencyShutdown) shutdownReason = SHUTDOWN_TIMEOUT;
     emergencyShutdown = true;
   }
 }
@@ -25,6 +27,7 @@ void IRAM_ATTR watchdogCheck() {
     Serial.println("!!! WATCHDOG STARVED - EMERGENCY SHUTDOWN !!!");
     Serial.println("!!! Forcing immediate file cleanup !!!");
     analogWrite(HEATER_PWM_PIN, 0);  // Turn off PWM
+    shutdownReason = SHUTDOWN_WATCHDOG;
     emergencyShutdown = true;
     // Don't rely on hardware WDT, manage via flag
   }
@@ -38,7 +41,24 @@ void initializeSafetySystem() {
   watchdogTimer.attach_ms(8000, watchdogCheck); // Check every 8 seconds (allows time for file operations)
   systemAlive = true;
   emergencyShutdown = false;
+  shutdownReason = SHUTDOWN_NONE;
   lastSafetyCheck = millis();
+}
+
+void triggerEmergencyShutdown(ShutdownReason reason) {
+  if (!emergencyShutdown) shutdownReason = reason;
+  emergencyShutdown = true;
+}
+
+const char* shutdownReasonText() {
+  switch (shutdownReason) {
+    case SHUTDOWN_TIMEOUT:      return "heater timeout";
+    case SHUTDOWN_OVER_TEMP:    return "over-temperature";
+    case SHUTDOWN_SENSOR:       return "temperature sensor fault";
+    case SHUTDOWN_WATCHDOG:     return "watchdog";
+    case SHUTDOWN_SAFETY_TIMER: return "safety timer stopped";
+    default:                    return emergencyShutdown ? "unknown" : "";
+  }
 }
 
 void feedWatchdog() {

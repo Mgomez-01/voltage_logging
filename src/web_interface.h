@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include "data_manager.h"  // For SensorReading struct and buffer access
-#include "sensor_manager.h"  // For currentSensorChannel
+#include "sensor_manager.h"  // ADC reads and temperature conversion
 
 // External objects
 extern ESP8266WebServer server;

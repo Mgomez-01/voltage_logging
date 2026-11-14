@@ -6,7 +6,8 @@
 #include <SD.h>
 
 // One logged row (40 bytes in RAM). With averaging off, a row is one sample
-// cycle (channels 0 -> 1 -> 2) and the ADC fields hold whole raw counts. With
+// cycle (one MCP3208 conversion of CH1 and CH2) and the ADC fields hold whole
+// raw codes (0-4095). With
 // averaging on, a row is the mean of `samples` cycles and the ADC fields hold
 // the mean counts (fractional). Some logged values are not stored per row to
 // save RAM:
@@ -17,13 +18,13 @@
 //    flushed before the gains change, see handlePIDParams())
 struct SensorReading {
   unsigned long timestamp;   // millis() at the PID Temp Sensor sample
-  float voltage;             // Channel 0, voltageAdc / 1024 (0-1 V scale)
+  float voltage;             // Always 0 on the PCB (no voltage input); kept for the CSV format
   float temperature;         // Channel 1, PID Temp Sensor, deg C (-999 = open/short sensor)
   float pidValue;            // Heater PWM duty cycle (0-100%), logged as pid_output
   float targetTemp;          // Target temperature at time of reading
-  float voltageAdc;          // ADC count (0-1024), channel 0; mean count when averaged
-  float thermistorAdc;       // ADC count, channel 1 (PID Temp Sensor); mean when averaged
-  float auxThermistorAdc;    // ADC count, channel 2 (AUX Temp Sensor); mean when averaged
+  float voltageAdc;          // Always 0 on the PCB
+  float thermistorAdc;       // MCP3208 code (0-4095), CH1 (PID Temp Sensor); mean when averaged
+  float auxThermistorAdc;    // MCP3208 code (0-4095), CH2 (AUX Temp Sensor); mean when averaged
   bool heaterState;          // True if heater PWM duty > 0
   bool pidEnabled;           // True if the PID was controlling the heater
   uint8_t samples;           // Sample cycles in this row: 1 = raw, N = averaged

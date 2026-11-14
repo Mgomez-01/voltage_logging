@@ -11,11 +11,16 @@
 // control = sensor the PID controls (0 = PID Temp Sensor, 1 = AUX Temp Sensor);
 //           target_temp applies to that sensor
 // step    = setpoint program step (1-100) when the row was sampled, 0 = none
+// adc_fs  = ADC full scale for the *_adc columns: 4096 on the PCB (MCP3208,
+//           12-bit). Logs from the old board have no adc_fs column and are
+//           0-1023 (ESP8266 A0).
+// voltage / voltage_adc are always 0 on the PCB (it has no voltage input);
+// they are kept so scripts written for the old logs still parse.
 // Stored in flash (PROGMEM) to save RAM; print it with printCsvHeader().
 const char CSV_HEADER[] PROGMEM =
     "timestamp,voltage,temperature,heater_state,target_temp,pid_output,"
     "voltage_adc,thermistor_adc,thermistor_v,pid_enabled,kp,ki,kd,"
-    "aux_temp,aux_adc,aux_v,samples,control,step";
+    "aux_temp,aux_adc,aux_v,samples,control,step,adc_fs";
 
 static void printCsvHeader(File& f) {
   f.println(FPSTR(CSV_HEADER));
@@ -45,14 +50,12 @@ const uint8_t DEFAULT_AVERAGE_SAMPLES = 32;    // 32 cycles x ~6 ms = ~0.2 s per
 uint8_t averageSamples = DEFAULT_AVERAGE_SAMPLES;
 
 // Running sums of the raw counts for the row being averaged
-static uint32_t avgVoltageSum = 0;
 static uint32_t avgThermistorSum = 0;
 static uint32_t avgAuxSum = 0;
 static uint8_t avgCount = 0;
 static unsigned long avgFirstTime = 0;
 
 void resetRowAverage() {
-  avgVoltageSum = 0;
   avgThermistorSum = 0;
   avgAuxSum = 0;
   avgCount = 0;
@@ -83,7 +86,6 @@ void addSampleCycle(const SensorReading& cycle) {
   // conversion's open/short checks working and lets noise resolve fractions of
   // a count.
   if (avgCount == 0) avgFirstTime = cycle.timestamp;
-  avgVoltageSum += (uint32_t)cycle.voltageAdc;
   avgThermistorSum += (uint32_t)cycle.thermistorAdc;
   avgAuxSum += (uint32_t)cycle.auxThermistorAdc;
   avgCount++;
@@ -94,10 +96,10 @@ void addSampleCycle(const SensorReading& cycle) {
   SensorReading row = cycle;
   float n = avgCount;
   row.timestamp = avgFirstTime + (cycle.timestamp - avgFirstTime) / 2;
-  row.voltageAdc = avgVoltageSum / n;
+  row.voltageAdc = 0;          // No voltage input on the PCB
   row.thermistorAdc = avgThermistorSum / n;
   row.auxThermistorAdc = avgAuxSum / n;
-  row.voltage = row.voltageAdc / 1024.0;
+  row.voltage = 0;
   row.temperature = convertThermistorToTemperature(row.thermistorAdc);
   row.samples = avgCount;
   resetRowAverage();
@@ -245,7 +247,6 @@ void writeBufferToFile() {
         return; // Nothing to write
     }
 
-    float batchVoltageMin = 1.0, batchVoltageMax = 0.0, batchVoltageSum = 0.0;
     float batchTempMin = 999.0, batchTempMax = -999.0, batchTempSum = 0.0;
     float batchAuxMin = 999.0, batchAuxMax = -999.0, batchAuxSum = 0.0;
     int batchCount = 0;
@@ -311,7 +312,8 @@ void writeBufferToFile() {
         dataFile.print(",");
         dataFile.print(readings[i].control);
         dataFile.print(",");
-        dataFile.println(readings[i].step);
+        dataFile.print(readings[i].step);
+        dataFile.println(F(",4096"));   // adc_fs: MCP3208 full scale
 
         if (aux > -50 && aux < 150) {
             if (aux < batchAuxMin) batchAuxMin = aux;
@@ -320,12 +322,7 @@ void writeBufferToFile() {
             validAuxCount++;
         }
 
-        float v = readings[i].voltage;
         float t = readings[i].temperature;
-
-        if (v < batchVoltageMin) batchVoltageMin = v;
-        if (v > batchVoltageMax) batchVoltageMax = v;
-        batchVoltageSum += v;
 
         if (t > -50 && t < 150) {
             if (t < batchTempMin) batchTempMin = t;
@@ -362,9 +359,6 @@ void writeBufferToFile() {
     Serial.print(" sensor readings to file in ");
     Serial.print(totalWriteTime);
     Serial.println("ms");
-    Serial.print("  Voltage - Min="); Serial.print(batchVoltageMin, 4);
-    Serial.print("V, Max="); Serial.print(batchVoltageMax, 4);
-    Serial.print("V, Avg="); Serial.print(batchVoltageSum / batchCount, 4); Serial.println("V");
 
     if (validTempCount > 0) {
       Serial.print(F("  PID Temp Sensor - Min=")); Serial.print(batchTempMin, 2);

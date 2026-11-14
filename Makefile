@@ -1,8 +1,8 @@
-# Makefile for ESP8266 Voltage + Temperature Logger (SD card + PWM heater)
+# Makefile for the ESP8266 Temperature Logger, PCB version (MCP3208 + SD card + PWM heater)
 # Requires PlatformIO to be installed
 #
-# Board environment (from platformio.ini): esp8266 (NodeMCU, default),
-# wemos_d1_mini, or esp12e. Override with e.g. `make deploy ENV=wemos_d1_mini`.
+# Board environment (from platformio.ini): esp8266 (NodeMCU v2 in the PCB socket),
+# the only one on this branch.
 ENV ?= esp8266
 
 .PHONY: build upload monitor clean install help filesystem deploy
@@ -19,14 +19,6 @@ build:
 build-nodemcu:
 	@echo "Building for NodeMCU..."
 	pio run -e esp8266
-
-build-esp12e:
-	@echo "Building for ESP12E..."
-	pio run -e esp12e
-
-build-wemos:
-	@echo "Building for Wemos D1 Mini..."
-	pio run -e wemos_d1_mini
 
 # Upload to ESP8266
 upload: build
@@ -113,12 +105,10 @@ fix-platform:
 help:
 	@echo "ESP8266 Voltage Logger - Available targets:"
 	@echo ""
-	@echo "  Board: ENV=$(ENV) (override: make <target> ENV=wemos_d1_mini | esp12e)"
+	@echo "  Board: ENV=$(ENV) (NodeMCU v2 on the PCB)"
 	@echo ""
 	@echo "  build         - Compile the firmware for ENV"
 	@echo "  build-nodemcu - Build for NodeMCU specifically"
-	@echo "  build-esp12e  - Build for ESP12E specifically"
-	@echo "  build-wemos   - Build for Wemos D1 Mini specifically"
 	@echo "  upload        - Upload firmware to ESP8266"
 	@echo "  monitor       - Start serial monitor"
 	@echo "  deploy        - Build, upload firmware + web page, and monitor"
@@ -136,15 +126,14 @@ help:
 	@echo ""
 	@echo "Quick start:"
 	@echo "  make fix-platform  # Fix platform issues first"
-	@echo "  make setup-lsp     # Setup language server (fixes A0 errors)"
+	@echo "  make setup-lsp     # Setup language server (fixes undefined-symbol errors)"
 	@echo "  make deploy        # Build, upload firmware + web page, and monitor"
 	@echo ""
 	@echo "If build fails:"
 	@echo "  make troubleshoot  # Check what's wrong"
-	@echo "  make build-wemos   # Try another board environment"
 	@echo ""
 	@echo "For IDE/Editor issues:"
-	@echo "  make setup-lsp     # Fix language server A0 undefined errors"
+	@echo "  make setup-lsp     # Fix language server undefined-symbol errors"
 	@echo ""
 	@echo "Prerequisites:"
 	@echo "  pip install platformio"
